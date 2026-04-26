@@ -52,6 +52,9 @@ public class PostgresAuditEventRepository implements AuditEventRepository {
 
         UUID id = UUID.randomUUID();
         String contextJson = serialize(newEvent.context());
+        // Hash uses the canonical (sorted-key) form so JSONB round-trip cannot
+        // invalidate verification — insertion order is not preserved by JSONB.
+        String canonicalContext = hashChainService.canonicalize(newEvent.context());
         String hash = hashChainService.computeHash(
                 prevHash,
                 id,
@@ -60,7 +63,7 @@ public class PostgresAuditEventRepository implements AuditEventRepository {
                 newEvent.action(),
                 newEvent.resource(),
                 newEvent.outcome(),
-                contextJson
+                canonicalContext
         );
 
         Long sequenceNo = jdbc.queryForObject(

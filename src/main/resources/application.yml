@@ -1,0 +1,35 @@
+spring:
+  application:
+    name: audit-log
+  datasource:
+    url: jdbc:postgresql://localhost:5432/audit
+    username: audit
+    password: audit
+  jackson:
+    default-property-inclusion: non_null
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: 8080
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+
+audit:
+  retention:
+    days: 90
+    cron: "0 0 3 * * *"

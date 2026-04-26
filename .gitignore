@@ -1,0 +1,71 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+replay_pid*
+
+# Build outputs
+out/
+bin/
+target/
+
+# Spring Boot
+spring-boot-*.log
+application-local.yml
+application-local.properties
+
+# Logs
+*.log
+logs/
+
+# IDE — IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# IDE — Eclipse
+.classpath
+.project
+.settings/
+.factorypath
+.apt_generated/
+.apt_generated_test/
+
+# IDE — VS Code
+.vscode/
+
+# IDE — NetBeans
+nbproject/private/
+nbbuild/
+nbdist/
+.nb-gradle/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Testcontainers / Docker temp
+.testcontainers/
+
+# Coverage
+jacoco.exec
+*.exec
+coverage/

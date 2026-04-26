@@ -1,0 +1,9 @@
+spring:
+  flyway:
+    enabled: true
+
+audit:
+  retention:
+    days: 90
+    # Disable scheduler during tests.
+    cron: "-"

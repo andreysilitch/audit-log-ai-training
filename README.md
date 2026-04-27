@@ -1,36 +1,36 @@
 # audit-log
 
-Внутренний audit-сервис для приёма, хранения и поиска аудит-событий компании. Используется compliance-офицерами, SRE и security-аналитиками. Приоритеты: корректность, неизменяемость записей, надёжность хранения, удобный поиск.
+Internal audit service for ingesting, storing and searching the company's audit events. Used by compliance officers, SRE and security analysts. Priorities: correctness, immutability of records, durable storage, convenient search.
 
-Подробные требования и инварианты — в [`AGENTS.md`](AGENTS.md).
+Detailed requirements and invariants — see [`AGENTS.md`](AGENTS.md).
 
-## Стек
+## Stack
 
 - Java 21
 - Spring Boot 3.3
-- Gradle Kotlin DSL (wrapper в репозитории)
-- PostgreSQL 16 (`JSONB`, триггеры, advisory locks)
-- Flyway для миграций схемы
-- Testcontainers для интеграционных тестов
+- Gradle Kotlin DSL (wrapper in repo)
+- PostgreSQL 16 (`JSONB`, triggers, advisory locks)
+- Flyway for schema migrations
+- Testcontainers for integration tests
 
-## Структура проекта
+## Project layout
 
 ```
 src/main/java/com/example/audit
-  AuditApplication.java        # точка входа Spring
-  ClockConfig.java             # бин Clock
+  AuditApplication.java        # Spring entry point
+  ClockConfig.java             # Clock bean
 
-  api/                         # HTTP-слой
+  api/                         # HTTP layer
     AuditEventController.java
     AuditEventRequest.java
     AuditEventResponse.java
     AuditEventSearchRequest.java
     ApiExceptionHandler.java
 
-  domain/                      # бизнес-правила и инварианты
+  domain/                      # business rules and invariants
     AuditEvent.java
     AuditOutcome.java
-    AuditEventRepository.java  # append-only контракт
+    AuditEventRepository.java  # append-only contract
     AuditEventService.java
     AuditEventSearchCriteria.java
     NewAuditEvent.java
@@ -50,15 +50,15 @@ src/main/resources
   application.yml
   db/migration/V1__create_audit_events.sql
 
-src/integrationTest/java       # интеграционные тесты на Testcontainers
-src/test/java                  # unit-тесты (пока пусто)
+src/integrationTest/java       # integration tests on Testcontainers
+src/test/java                  # unit tests (empty for now)
 ```
 
 ## API
 
 ### `POST /audit-events`
 
-Запись нового аудит-события. Сервер сам выставляет `id`, `timestamp`, `sequence_no`, `prev_hash`, `hash`. Клиент эти поля передавать не должен.
+Record a new audit event. Server sets `id`, `timestamp`, `sequence_no`, `prev_hash`, `hash` itself. Client must not send these fields.
 
 ```bash
 curl -X POST http://localhost:8080/audit-events \
@@ -72,7 +72,7 @@ curl -X POST http://localhost:8080/audit-events \
   }'
 ```
 
-Ответ `201 Created`:
+Response `201 Created`:
 
 ```json
 {
@@ -88,86 +88,86 @@ curl -X POST http://localhost:8080/audit-events \
 }
 ```
 
-`outcome` — одно из `SUCCESS`, `DENIED`, `ERROR`. `actor`, `action`, `resource` обязательны и не могут быть пустыми/только из пробелов.
+`outcome` — one of `SUCCESS`, `DENIED`, `ERROR`. `actor`, `action`, `resource` are required and cannot be empty or whitespace-only.
 
 ### `GET /audit-events`
 
-Поиск по `actor`, `resource` и обязательному временному диапазону (полуинтервал `[from, to)`). Пагинация через `limit` (по умолчанию 100, максимум 1000) и `offset`.
+Search by `actor`, `resource` and a mandatory time range (half-open interval `[from, to)`). Pagination via `limit` (default 100, max 1000) and `offset`.
 
 ```bash
 curl 'http://localhost:8080/audit-events?actor=alice@example.com&from=2026-04-01T00:00:00Z&to=2026-04-30T00:00:00Z&limit=100&offset=0'
 ```
 
-Временной диапазон обязателен — full-scan по таблице запрещён архитектурно.
+Time range is mandatory — full table scan is forbidden by design.
 
 ### Actuator
 
 `GET /actuator/health`, `/actuator/info`, `/actuator/metrics`, `/actuator/prometheus`.
 
-## Запуск локально
+## Running locally
 
-### 1. Поднять PostgreSQL
+### 1. Start PostgreSQL
 
 ```bash
 docker compose up -d postgres
 ```
 
-`postgres:16-alpine`, порт `5432`, db/user/password `audit/audit/audit`.
+`postgres:16-alpine`, port `5432`, db/user/password `audit/audit/audit`.
 
-### 2. Запустить приложение
+### 2. Start the application
 
 ```bash
 ./gradlew bootRun
 ```
 
-Слушает на `:8080`. Flyway применяет `V1__create_audit_events.sql` при старте.
+Listens on `:8080`. Flyway applies `V1__create_audit_events.sql` on startup.
 
-### 3. Или запустить весь стек в контейнерах
+### 3. Or run the whole stack in containers
 
 ```bash
 docker compose --profile app up --build
 ```
 
-## Тесты
+## Tests
 
 ```bash
-./gradlew test              # unit-тесты (без БД)
-./gradlew integrationTest   # интеграционные на Testcontainers
-./gradlew check             # и то и другое
+./gradlew test              # unit tests (no DB)
+./gradlew integrationTest   # integration tests on Testcontainers
+./gradlew check             # both
 ```
 
-Интеграционные тесты сами поднимают `postgres:16-alpine` — нужен запущенный Docker.
+Integration tests start `postgres:16-alpine` themselves — Docker must be running.
 
-### Покрытие
+### Coverage
 
-| Тестовый класс | Что проверяет |
+| Test class | What it checks |
 |---|---|
-| `AuditEventServiceIntegrationTest` | append + цепочка, поиск, валидация, БД-триггеры append-only, детектирование подмены |
-| `AuditEventControllerIntegrationTest` | HTTP-контракт, ошибки валидации, игнорирование клиентского `timestamp` |
-| `PostgresAuditEventRepositoryIntegrationTest` | пагинация, полуинтервал по времени, фильтр по `resource`, `latest()`, порядок `findOlderThan` |
-| `RetentionPolicyIntegrationTest` | archival, идемпотентность, no-op если ничего не просрочено |
-| `ConcurrentAppendIntegrationTest` | параллельные append'ы сохраняют валидность hash chain |
+| `AuditEventServiceIntegrationTest` | append + chain, search, validation, append-only DB triggers, tamper detection |
+| `AuditEventControllerIntegrationTest` | HTTP contract, validation errors, ignoring client-supplied `timestamp` |
+| `PostgresAuditEventRepositoryIntegrationTest` | pagination, half-open time interval, `resource` filter, `latest()`, `findOlderThan` ordering |
+| `RetentionPolicyIntegrationTest` | archival, idempotency, no-op when nothing is overdue |
+| `ConcurrentAppendIntegrationTest` | parallel appends preserve hash chain validity |
 
-## Какие инварианты держим
+## Invariants we hold
 
-- **Append-only на уровне БД** — триггеры `BEFORE UPDATE` и `BEFORE DELETE` бросают `audit_events is append-only`.
-- **`actor`, `action`, `resource`, `outcome`, `timestamp` — `NOT NULL`** + CHECK-констрейнты на непустоту и допустимые значения `outcome`.
-- **`context` — `JSONB`**, никогда не свободная строка.
-- **`timestamp` ставит сервер** (с округлением до микросекунд для стабильного round-trip через `TIMESTAMPTZ`).
-- **Контракт репозитория** — только `append`, `search`, `latest`, `findOlderThan`. Никаких публичных `update` / `deleteById` / `deleteAll`.
-- **Поиск требует time range** и опирается на индексы.
-- **Hash chain в write-path** — SHA-256 от `prev_hash` + канонической сериализации события под tx-scoped advisory lock, так что порядок `prev_hash` консистентен. Каноническая JSON-форма с рекурсивно отсортированными ключами — JSONB round-trip не ломает верификацию.
-- **Retention не удаляет из основной таблицы.** `RetentionPolicyService` копирует просроченные события в `audit_events_archive`. Физическое удаление — отдельное решение (см. AGENTS.md, инвариант 5).
-- **Ошибки API не светят SQL, stack trace или детали схемы.**
+- **Append-only at the DB level** — `BEFORE UPDATE` and `BEFORE DELETE` triggers raise `audit_events is append-only`.
+- **`actor`, `action`, `resource`, `outcome`, `timestamp` are `NOT NULL`** + CHECK constraints for non-emptiness and allowed `outcome` values.
+- **`context` is `JSONB`**, never a free-form string.
+- **`timestamp` is set by the server** (rounded to microseconds for stable round-trip through `TIMESTAMPTZ`).
+- **Repository contract** — only `append`, `search`, `latest`, `findOlderThan`. No public `update` / `deleteById` / `deleteAll`.
+- **Search requires a time range** and relies on indexes.
+- **Hash chain in the write path** — SHA-256 over `prev_hash` + canonical serialization of the event under a tx-scoped advisory lock, so `prev_hash` order is consistent. Canonical JSON form with recursively sorted keys — JSONB round-trip does not break verification.
+- **Retention does not delete from the main table.** `RetentionPolicyService` copies overdue events into `audit_events_archive`. Physical deletion is a separate decision (see AGENTS.md, invariant 5).
+- **API errors do not leak SQL, stack traces or schema details.**
 
-## Конфигурация
+## Configuration
 
-Через `application.yml` или переменные окружения.
+Via `application.yml` or environment variables.
 
-| Параметр | По умолчанию | Назначение |
+| Parameter | Default | Purpose |
 |---|---|---|
-| `spring.datasource.url` | `jdbc:postgresql://localhost:5432/audit` | URL Postgres |
-| `spring.datasource.username` / `.password` | `audit` / `audit` | креды Postgres |
-| `audit.retention.days` | `90` | окно retention перед archival |
-| `audit.retention.cron` | `0 0 3 * * *` | cron для retention (Spring, 6 полей) |
-| `server.port` | `8080` | HTTP-порт |
+| `spring.datasource.url` | `jdbc:postgresql://localhost:5432/audit` | Postgres URL |
+| `spring.datasource.username` / `.password` | `audit` / `audit` | Postgres credentials |
+| `audit.retention.days` | `90` | retention window before archival |
+| `audit.retention.cron` | `0 0 3 * * *` | retention cron (Spring, 6 fields) |
+| `server.port` | `8080` | HTTP port |

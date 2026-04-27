@@ -2,6 +2,7 @@ plugins {
     java
     id("org.springframework.boot") version "3.3.5"
     id("io.spring.dependency-management") version "1.1.6"
+    id("com.diffplug.spotless") version "6.25.0"
 }
 
 group = "com.example"
@@ -53,16 +54,31 @@ tasks.test {
     useJUnitPlatform()
 }
 
-val integrationTest = tasks.register<Test>("integrationTest") {
-    description = "Runs integration tests against real PostgreSQL via Testcontainers."
-    group = "verification"
-    testClassesDirs = sourceSets["integrationTest"].output.classesDirs
-    classpath = sourceSets["integrationTest"].runtimeClasspath
-    useJUnitPlatform()
-    shouldRunAfter(tasks.test)
-    systemProperty("spring.profiles.active", "integration-test")
-}
+val integrationTest =
+    tasks.register<Test>("integrationTest") {
+        description = "Runs integration tests against real PostgreSQL via Testcontainers."
+        group = "verification"
+        testClassesDirs = sourceSets["integrationTest"].output.classesDirs
+        classpath = sourceSets["integrationTest"].runtimeClasspath
+        useJUnitPlatform()
+        shouldRunAfter(tasks.test)
+        systemProperty("spring.profiles.active", "integration-test")
+    }
 
 tasks.named("check") {
     dependsOn(integrationTest)
+}
+
+spotless {
+    java {
+        target("src/*/java/**/*.java")
+        googleJavaFormat("1.22.0")
+        removeUnusedImports()
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+    kotlinGradle {
+        target("*.gradle.kts")
+        ktlint("1.3.1")
+    }
 }

@@ -56,7 +56,7 @@ class AuditEventServiceIntegrationTest {
     Instant after = Instant.now().plusSeconds(1);
 
     List<AuditEvent> bobOnly =
-        service.search(new AuditEventSearchCriteria("bob", null, before, after, 50, 0));
+        service.search(new AuditEventSearchCriteria("bob", null, before, after, 50, 0)).items();
 
     assertThat(bobOnly).hasSize(2).allMatch(e -> e.actor().equals("bob"));
   }
@@ -95,7 +95,7 @@ class AuditEventServiceIntegrationTest {
     Instant from = Instant.now().minusSeconds(60);
     Instant to = Instant.now().plusSeconds(60);
     List<AuditEvent> ascending =
-        service.search(new AuditEventSearchCriteria("eve", null, from, to, 100, 0)).stream()
+        service.search(new AuditEventSearchCriteria("eve", null, from, to, 100, 0)).items().stream()
             .sorted((x, y) -> Long.compare(x.sequenceNo(), y.sequenceNo()))
             .toList();
 

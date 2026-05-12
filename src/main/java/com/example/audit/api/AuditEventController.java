@@ -53,6 +53,6 @@ public class AuditEventController {
     int safeLimit = Math.min(Math.max(limit == null ? DEFAULT_LIMIT : limit, 1), MAX_LIMIT);
     int safeOffset = Math.max(offset == null ? 0 : offset, 0);
     var criteria = new AuditEventSearchCriteria(actor, resource, from, to, safeLimit, safeOffset);
-    return service.search(criteria).stream().map(AuditEventResponse::of).toList();
+    return service.search(criteria).items().stream().map(AuditEventResponse::of).toList();
   }
 }

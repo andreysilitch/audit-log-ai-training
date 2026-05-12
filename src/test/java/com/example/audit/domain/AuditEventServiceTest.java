@@ -108,8 +108,73 @@ class AuditEventServiceTest {
   void happyPathCallsRepository() {
     AuditEventSearchCriteria c = criteria("alice", null, T0, T1, 50, 0);
     when(repository.search(any())).thenReturn(List.of());
-    List<AuditEvent> result = service.search(c);
-    assertThat(result).isEmpty();
+    AuditEventPage page = service.search(c);
+    assertThat(page.items()).isEmpty();
+    assertThat(page.hasMore()).isFalse();
+    assertThat(page.nextOffset()).isNull();
     verify(repository, times(1)).search(c);
+  }
+
+  @Test
+  void emptyRepositoryResultProducesEmptyPage() {
+    AuditEventSearchCriteria c = criteria("alice", null, T0, T1, 10, 0);
+    when(repository.search(any())).thenReturn(List.of());
+    AuditEventPage page = service.search(c);
+    assertThat(page.items()).isEmpty();
+    assertThat(page.hasMore()).isFalse();
+    assertThat(page.nextOffset()).isNull();
+    assertThat(page.limit()).isEqualTo(10);
+    assertThat(page.offset()).isZero();
+  }
+
+  @Test
+  void partialPageHasNoMore() {
+    AuditEventSearchCriteria c = criteria("alice", null, T0, T1, 10, 0);
+    when(repository.search(any())).thenReturn(eventList(3));
+    AuditEventPage page = service.search(c);
+    assertThat(page.items()).hasSize(3);
+    assertThat(page.hasMore()).isFalse();
+    assertThat(page.nextOffset()).isNull();
+  }
+
+  @Test
+  void exactPageHasNoMore() {
+    AuditEventSearchCriteria c = criteria("alice", null, T0, T1, 10, 0);
+    when(repository.search(any())).thenReturn(eventList(10));
+    AuditEventPage page = service.search(c);
+    assertThat(page.items()).hasSize(10);
+    assertThat(page.hasMore()).isFalse();
+    assertThat(page.nextOffset()).isNull();
+  }
+
+  @Test
+  void overflowPageTrimsAndSetsNextOffset() {
+    AuditEventSearchCriteria c = criteria("alice", null, T0, T1, 10, 20);
+    when(repository.search(any())).thenReturn(eventList(11));
+    AuditEventPage page = service.search(c);
+    assertThat(page.items()).hasSize(10);
+    assertThat(page.hasMore()).isTrue();
+    assertThat(page.nextOffset()).isEqualTo(30);
+    assertThat(page.offset()).isEqualTo(20);
+    assertThat(page.limit()).isEqualTo(10);
+  }
+
+  private static List<AuditEvent> eventList(int size) {
+    java.util.List<AuditEvent> events = new java.util.ArrayList<>(size);
+    for (int i = 0; i < size; i++) {
+      events.add(
+          new AuditEvent(
+              java.util.UUID.randomUUID(),
+              T0.plusSeconds(i),
+              "alice",
+              "act",
+              "res",
+              AuditOutcome.SUCCESS,
+              com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode(),
+              null,
+              "h" + i,
+              (long) i));
+    }
+    return events;
   }
 }

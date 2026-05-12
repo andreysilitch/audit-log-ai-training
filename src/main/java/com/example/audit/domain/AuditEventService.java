@@ -36,7 +36,7 @@ public class AuditEventService {
         new NewAuditEvent(timestamp, actor, action, resource, outcome, safeContext));
   }
 
-  public List<AuditEvent> search(AuditEventSearchCriteria criteria) {
+  public AuditEventPage search(AuditEventSearchCriteria criteria) {
     if (criteria.from() == null || criteria.to() == null) {
       throw new QueryValidationException("from and to are required");
     }
@@ -60,7 +60,12 @@ public class AuditEventService {
     if (criteria.offset() < 0) {
       throw new QueryValidationException("offset must be non-negative");
     }
-    return repository.search(criteria);
+    List<AuditEvent> rows = repository.search(criteria);
+    boolean hasMore = rows.size() > criteria.limit();
+    List<AuditEvent> items =
+        hasMore ? List.copyOf(rows.subList(0, criteria.limit())) : List.copyOf(rows);
+    Integer nextOffset = hasMore ? criteria.offset() + items.size() : null;
+    return new AuditEventPage(items, criteria.limit(), criteria.offset(), nextOffset, hasMore);
   }
 
   private static void requireNonBlank(String value, String field) {

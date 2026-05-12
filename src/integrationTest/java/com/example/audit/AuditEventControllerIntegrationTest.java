@@ -58,7 +58,16 @@ class AuditEventControllerIntegrationTest {
                 .param("from", from.toString())
                 .param("to", to.toString()))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$[0].actor").value("alice"));
+        .andExpect(jsonPath("$.items[0].actor").value("alice"))
+        .andExpect(jsonPath("$.items[0].occurredAt").exists())
+        .andExpect(jsonPath("$.items[0].outcome").value("SUCCESS"))
+        .andExpect(jsonPath("$.items[0].hash").doesNotExist())
+        .andExpect(jsonPath("$.items[0].sequenceNo").doesNotExist())
+        .andExpect(jsonPath("$.items[0].timestamp").doesNotExist())
+        .andExpect(jsonPath("$.page.limit").value(50))
+        .andExpect(jsonPath("$.page.offset").value(0))
+        .andExpect(jsonPath("$.page.hasMore").value(false))
+        .andExpect(jsonPath("$.page.nextOffset").value(org.hamcrest.Matchers.nullValue()));
   }
 
   @Test

@@ -5,7 +5,6 @@ import com.example.audit.domain.AuditEventSearchCriteria;
 import com.example.audit.domain.AuditEventService;
 import jakarta.validation.Valid;
 import java.time.Instant;
-import java.util.List;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,8 +19,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/audit-events")
 public class AuditEventController {
 
-  private static final int DEFAULT_LIMIT = 100;
-  private static final int MAX_LIMIT = 1000;
+  private static final int DEFAULT_LIMIT = 50;
+  private static final int DEFAULT_OFFSET = 0;
 
   private final AuditEventService service;
 
@@ -43,16 +42,17 @@ public class AuditEventController {
   }
 
   @GetMapping
-  public List<AuditEventResponse> search(
+  public AuditEventSearchResponse search(
       @RequestParam(required = false) String actor,
       @RequestParam(required = false) String resource,
       @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
       @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
       @RequestParam(required = false) Integer limit,
       @RequestParam(required = false) Integer offset) {
-    int safeLimit = Math.min(Math.max(limit == null ? DEFAULT_LIMIT : limit, 1), MAX_LIMIT);
-    int safeOffset = Math.max(offset == null ? 0 : offset, 0);
-    var criteria = new AuditEventSearchCriteria(actor, resource, from, to, safeLimit, safeOffset);
-    return service.search(criteria).items().stream().map(AuditEventResponse::of).toList();
+    int effectiveLimit = limit == null ? DEFAULT_LIMIT : limit;
+    int effectiveOffset = offset == null ? DEFAULT_OFFSET : offset;
+    var criteria =
+        new AuditEventSearchCriteria(actor, resource, from, to, effectiveLimit, effectiveOffset);
+    return AuditEventSearchResponse.of(service.search(criteria));
   }
 }

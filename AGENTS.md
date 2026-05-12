@@ -303,3 +303,5 @@ src/main/resources/db/migration
    - если Spotless нашёл нарушения, фикс делается через `./gradlew spotlessApply` и попадает в тот же коммит, а не вторым «format» PR;
    - запуск только `test` или только `integrationTest` не заменяет `build`: они пропускают `spotlessCheck` и часть архитектурных проверок;
    - правило применяется как к ручным PR, так и к PR, открываемым агентами.
+
+@RTK.md

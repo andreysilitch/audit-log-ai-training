@@ -1,5 +1,6 @@
 package com.example.audit.api;
 
+import com.example.audit.domain.QueryValidationException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -38,6 +39,12 @@ public class ApiExceptionHandler {
   @ExceptionHandler(IllegalArgumentException.class)
   public ResponseEntity<Map<String, Object>> handleIllegal(IllegalArgumentException ex) {
     return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+  }
+
+  @ExceptionHandler(QueryValidationException.class)
+  public ResponseEntity<Map<String, Object>> handleQueryValidation(QueryValidationException ex) {
+    return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+        .body(Map.of("error", "validation_failed", "message", ex.getMessage()));
   }
 
   @ExceptionHandler(MissingServletRequestParameterException.class)

@@ -8,6 +8,7 @@ import com.example.audit.domain.AuditEventRepository;
 import com.example.audit.domain.AuditEventSearchCriteria;
 import com.example.audit.domain.AuditEventService;
 import com.example.audit.domain.AuditOutcome;
+import com.example.audit.domain.QueryValidationException;
 import com.example.audit.tamper.HashChainService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
@@ -71,8 +72,8 @@ class AuditEventServiceIntegrationTest {
   void rejectsSearchWithoutTimeRange() {
     assertThatThrownBy(
             () -> service.search(new AuditEventSearchCriteria(null, null, null, null, 100, 0)))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("time range is required");
+        .isInstanceOf(QueryValidationException.class)
+        .hasMessage("from and to are required");
   }
 
   @Test

@@ -38,16 +38,27 @@ public class AuditEventService {
 
   public List<AuditEvent> search(AuditEventSearchCriteria criteria) {
     if (criteria.from() == null || criteria.to() == null) {
-      throw new IllegalArgumentException("time range is required");
+      throw new QueryValidationException("from and to are required");
     }
     if (!criteria.from().isBefore(criteria.to())) {
-      throw new IllegalArgumentException("from must be before to");
+      throw new QueryValidationException("from must be before to");
     }
-    if (criteria.limit() <= 0 || criteria.limit() > 1000) {
-      throw new IllegalArgumentException("limit must be between 1 and 1000");
+    boolean actorBlank = criteria.actor() == null || criteria.actor().isBlank();
+    boolean resourceBlank = criteria.resource() == null || criteria.resource().isBlank();
+    if (actorBlank && resourceBlank) {
+      throw new QueryValidationException("at least one of actor or resource is required");
+    }
+    if (criteria.actor() != null && criteria.actor().isBlank()) {
+      throw new QueryValidationException("actor must not be blank");
+    }
+    if (criteria.resource() != null && criteria.resource().isBlank()) {
+      throw new QueryValidationException("resource must not be blank");
+    }
+    if (criteria.limit() < 1 || criteria.limit() > 200) {
+      throw new QueryValidationException("limit must be between 1 and 200");
     }
     if (criteria.offset() < 0) {
-      throw new IllegalArgumentException("offset must be non-negative");
+      throw new QueryValidationException("offset must be non-negative");
     }
     return repository.search(criteria);
   }

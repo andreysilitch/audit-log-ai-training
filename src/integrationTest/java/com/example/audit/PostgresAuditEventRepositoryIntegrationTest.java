@@ -44,6 +44,7 @@ class PostgresAuditEventRepositoryIntegrationTest {
               AuditOutcome.SUCCESS,
               objectMapper.createObjectNode()));
     }
+    // Repository fetches limit + 1 so the service can detect hasMore.
     var criteria =
         new AuditEventSearchCriteria(actor, null, base.minusSeconds(1), base.plusSeconds(60), 2, 0);
 
@@ -57,12 +58,67 @@ class PostgresAuditEventRepositoryIntegrationTest {
             new AuditEventSearchCriteria(
                 actor, null, base.minusSeconds(1), base.plusSeconds(60), 2, 4));
 
-    assertThat(page1).hasSize(2);
-    assertThat(page2).hasSize(2);
+    assertThat(page1).hasSize(3);
+    assertThat(page2).hasSize(3);
     assertThat(page3).hasSize(1);
 
-    // DESC ordering by timestamp
+    // DESC ordering by timestamp.
     assertThat(page1.get(0).timestamp()).isAfterOrEqualTo(page1.get(1).timestamp());
+  }
+
+  @Test
+  void deterministicTieBreakOnIdenticalTimestamp() {
+    String actor = "tie-" + UUID.randomUUID();
+    Instant sameInstant = Instant.now().truncatedTo(ChronoUnit.MICROS);
+
+    repository.append(
+        new NewAuditEvent(
+            sameInstant, actor, "a", "r", AuditOutcome.SUCCESS, objectMapper.createObjectNode()));
+    repository.append(
+        new NewAuditEvent(
+            sameInstant, actor, "a", "r", AuditOutcome.SUCCESS, objectMapper.createObjectNode()));
+    repository.append(
+        new NewAuditEvent(
+            sameInstant, actor, "a", "r", AuditOutcome.SUCCESS, objectMapper.createObjectNode()));
+
+    var criteria =
+        new AuditEventSearchCriteria(
+            actor, null, sameInstant.minusSeconds(1), sameInstant.plusSeconds(1), 10, 0);
+
+    List<AuditEvent> first = repository.search(criteria);
+    List<AuditEvent> second = repository.search(criteria);
+
+    assertThat(first).hasSize(3).allMatch(e -> e.timestamp().equals(sameInstant));
+    // Tie-break is id DESC: every adjacent pair must be in descending id order.
+    for (int i = 1; i < first.size(); i++) {
+      assertThat(first.get(i).id().toString()).isLessThan(first.get(i - 1).id().toString());
+    }
+    // Repeating the query yields the same sequence.
+    assertThat(second.stream().map(AuditEvent::id).toList())
+        .isEqualTo(first.stream().map(AuditEvent::id).toList());
+  }
+
+  @Test
+  void searchFetchesLimitPlusOneForHasMoreDetection() {
+    String actor = "overflow-" + UUID.randomUUID();
+    Instant base = Instant.now().truncatedTo(ChronoUnit.MICROS);
+    for (int i = 0; i < 6; i++) {
+      repository.append(
+          new NewAuditEvent(
+              base.plusSeconds(i),
+              actor,
+              "a",
+              "r",
+              AuditOutcome.SUCCESS,
+              objectMapper.createObjectNode()));
+    }
+
+    List<AuditEvent> rows =
+        repository.search(
+            new AuditEventSearchCriteria(
+                actor, null, base.minusSeconds(1), base.plusSeconds(60), 5, 0));
+
+    assertThat(rows).hasSize(6);
   }
 
   @Test

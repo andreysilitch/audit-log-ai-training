@@ -73,7 +73,9 @@ class AuditEventQueryApiIntegrationTest {
                 .param("to", windowTo()))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.items.length()").value(3))
-        .andExpect(jsonPath("$.items[*].actor").value(org.hamcrest.Matchers.everyItem(org.hamcrest.Matchers.equalTo(actor))));
+        .andExpect(
+            jsonPath("$.items[*].actor")
+                .value(org.hamcrest.Matchers.everyItem(org.hamcrest.Matchers.equalTo(actor))));
   }
 
   @Test
@@ -93,7 +95,9 @@ class AuditEventQueryApiIntegrationTest {
                 .param("to", windowTo()))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.items.length()").value(2))
-        .andExpect(jsonPath("$.items[*].resource").value(org.hamcrest.Matchers.everyItem(org.hamcrest.Matchers.equalTo(resource))));
+        .andExpect(
+            jsonPath("$.items[*].resource")
+                .value(org.hamcrest.Matchers.everyItem(org.hamcrest.Matchers.equalTo(resource))));
   }
 
   @Test
@@ -218,11 +222,11 @@ class AuditEventQueryApiIntegrationTest {
 
   @Test
   void missingActorAndResourceReturns422() throws Exception {
-    mvc.perform(
-            get("/audit-events").param("from", windowFrom()).param("to", windowTo()))
+    mvc.perform(get("/audit-events").param("from", windowFrom()).param("to", windowTo()))
         .andExpect(status().isUnprocessableEntity())
         .andExpect(jsonPath("$.error").value("validation_failed"))
-        .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("actor or resource")));
+        .andExpect(
+            jsonPath("$.message").value(org.hamcrest.Matchers.containsString("actor or resource")));
   }
 
   @Test
@@ -234,7 +238,9 @@ class AuditEventQueryApiIntegrationTest {
                 .param("to", "2026-01-01T00:00:00Z"))
         .andExpect(status().isUnprocessableEntity())
         .andExpect(jsonPath("$.error").value("validation_failed"))
-        .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("from must be before to")));
+        .andExpect(
+            jsonPath("$.message")
+                .value(org.hamcrest.Matchers.containsString("from must be before to")));
   }
 
   @Test
@@ -256,7 +262,9 @@ class AuditEventQueryApiIntegrationTest {
                 .param("to", windowTo())
                 .param("limit", "0"))
         .andExpect(status().isUnprocessableEntity())
-        .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("limit must be between 1 and 200")));
+        .andExpect(
+            jsonPath("$.message")
+                .value(org.hamcrest.Matchers.containsString("limit must be between 1 and 200")));
   }
 
   @Test
@@ -268,7 +276,9 @@ class AuditEventQueryApiIntegrationTest {
                 .param("to", windowTo())
                 .param("limit", "201"))
         .andExpect(status().isUnprocessableEntity())
-        .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("limit must be between 1 and 200")));
+        .andExpect(
+            jsonPath("$.message")
+                .value(org.hamcrest.Matchers.containsString("limit must be between 1 and 200")));
   }
 
   @Test
@@ -280,7 +290,9 @@ class AuditEventQueryApiIntegrationTest {
                 .param("to", windowTo())
                 .param("offset", "-1"))
         .andExpect(status().isUnprocessableEntity())
-        .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("offset must be non-negative")));
+        .andExpect(
+            jsonPath("$.message")
+                .value(org.hamcrest.Matchers.containsString("offset must be non-negative")));
   }
 
   @Test

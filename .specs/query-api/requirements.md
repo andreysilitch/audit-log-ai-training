@@ -13,7 +13,7 @@ The query API must help different operational roles answer different questions:
 The feature is a read-only HTTP endpoint, for example:
 
 ```http
-GET /audit-events?actor=u_42&resource=order/9f3b...&from=2026-04-01T00:00:00Z&to=2026-05-01T00:00:00Z&cursor=...&limit=50
+GET /audit-events?actor=u_42&resource=order/9f3b...&from=2026-04-01T00:00:00Z&to=2026-05-01T00:00:00Z&offset=0&limit=50
 ```
 
 ## User Stories with AC
@@ -27,7 +27,7 @@ As a compliance officer, I want to retrieve audit events for a specific actor wi
 1. The system exposes a read-only `GET /audit-events` endpoint.
 2. The endpoint supports filtering by `actor`.
 3. The endpoint supports filtering by `from` and `to` as an explicit UTC time range.
-4. Returned events include enough information for investigation: event id, occurred timestamp, actor, resource, action, outcome, and payload/context.
+4. Returned events include enough information for investigation: event id, occurred timestamp, actor, resource, action, outcome, and context.
 5. Results are ordered deterministically so the same dataset can be reviewed consistently across repeated requests.
 6. If request parameters are invalid, the API returns a safe validation error without leaking SQL, stack traces, or internal database details.
 
@@ -49,12 +49,12 @@ As a security analyst, I want to paginate through a large result set without los
 
 #### Acceptance Criteria
 
-1. The endpoint supports cursor-based pagination through `cursor` and `limit`.
-2. Pagination must be stable: when a client follows the returned cursor through the same query scope, events are not skipped or duplicated between pages.
+1. The endpoint supports offset-based pagination through `offset` and `limit`, where `offset` is a zero-based position and `limit` is the maximum number of events to return in one page.
+2. Pagination must be stable: when a client follows the returned continuation values through the same query scope, events are not skipped or duplicated between pages.
 3. The API returns at most `limit` events in one page.
-4. The API returns a cursor or equivalent continuation token when more results are available.
+4. The API returns a continuation value (such as a `nextOffset`) when more results are available, and signals when no further pages exist.
 5. The API defines a deterministic tie-break strategy for events with identical timestamps, so page boundaries remain stable.
-6. The API rejects invalid cursor values with a safe client error.
+6. The API rejects invalid pagination parameters (for example, a negative `offset` or a `limit` outside the allowed range) with a safe client error.
 
 ## Out of Scope
 

@@ -51,6 +51,23 @@ The response is a page envelope rather than a bare array so the API can carry pa
 - The API returns `occurredAt` at the HTTP boundary, mapped from the persisted `timestamp` field.
 - The API returns `context` rather than `payload` to align with the existing domain model and storage schema.
 - An empty match returns `200 OK` with `"items": []`.
+- Internal write-path fields `hash` and `sequenceNo` are never returned on the read path. They are part of the append/hash-chain contract only, and the POST response DTO that exposes them is not affected by this feature.
+
+### Field Types
+
+| Field | JSON type | Notes |
+| --- | --- | --- |
+| `id` | string (UUID) | Server-assigned event id. |
+| `occurredAt` | string (ISO-8601 UTC) | Server-recorded event time. |
+| `actor` | string | Non-blank. |
+| `resource` | string | Non-blank. |
+| `action` | string | Free-form action name. |
+| `outcome` | string | Enum name, e.g. `"SUCCESS"`, `"FAILURE"`. Serialized via the enum's `name()`. |
+| `context` | JSON object | Free-form JSON; mapped to `JsonNode` in Java. May be empty. |
+| `page.limit` | integer | Echoes the effective `limit`. |
+| `page.offset` | integer | Echoes the effective `offset`. |
+| `page.nextOffset` | integer or `null` | `null` when `hasMore` is `false`. The field is always present so clients can rely on its key. |
+| `page.hasMore` | boolean | Whether more results exist beyond this page. |
 
 ### Status Codes
 
@@ -144,9 +161,9 @@ The request must always include `from` and `to`, and both values remain fixed ac
 ### `hasMore` and `nextOffset`
 
 - The repository fetches `limit + 1` rows.
-- If more than `limit` rows are returned, the extra row is used only to compute `hasMore = true`.
-- `nextOffset` is computed as `offset + number_of_returned_items`.
-- If there are no more rows, `nextOffset` is `null` and `hasMore` is `false`.
+- If more than `limit` rows are returned, the extra row is trimmed and used only to compute `hasMore = true`. The response `items` array contains at most `limit` entries.
+- `nextOffset` is computed as `offset + items.size()` after trimming. Because trimming caps `items` at `limit` when `hasMore` is `true`, this is equivalent to `offset + limit` in that case.
+- If there are no more rows, `nextOffset` is `null` and `hasMore` is `false`. The `nextOffset` key is still serialized (as `null`) so the response shape is stable.
 
 ## Indexes
 
@@ -182,6 +199,8 @@ For combined `actor + resource` queries, PostgreSQL can use the more selective i
 - Add a new Flyway migration, for example `V2__add_query_api_search_indexes.sql`.
 - Keep schema changes additive only.
 - Do not modify `V1__create_audit_events.sql` after it has already been applied.
+- Use `CREATE INDEX IF NOT EXISTS` so the migration is safe to re-run during local development.
+- The pre-existing V1 indexes `(actor, timestamp DESC)` and `(resource, timestamp DESC)` are left in place. Pruning them is out of scope for this version: the new composite indexes supersede them for the query API, but removing the old ones would touch V1 and is deferred to a follow-up migration once production query plans confirm the new indexes are exclusively used.
 
 ## Validation Rules
 
@@ -198,10 +217,29 @@ The controller must validate HTTP syntax, but the domain service must also enfor
 - `limit` must be between `1` and `200`.
 - `offset`, if provided, must be a non-negative integer.
 
+### Validation Order
+
+Semantic validation in the domain service runs in this fixed order so the first error message is deterministic and useful:
+
+1. time range presence and ordering (`from`/`to` non-null, `from < to`);
+2. filter mutex (at least one of `actor` or `resource` is present and non-blank);
+3. individual blank checks (`actor` not blank if provided, `resource` not blank if provided);
+4. numeric bounds (`limit` in `[1, 200]`, `offset >= 0`).
+
+When both `actor` and `resource` are present but blank, the mutex rule fires first ("at least one of actor or resource is required") rather than the individual blank message, because that is the more actionable client-facing signal.
+
+### Domain Exception
+
+Semantic validation failures are signaled by a dedicated unchecked exception, e.g. `QueryValidationException extends RuntimeException`, defined in the `domain` package. It is distinct from the generic `IllegalArgumentException` used elsewhere in the codebase so the API layer can map it to `422` without affecting the write path.
+
 ### Status Mapping
 
-- Use `400` for parse failures.
-- Use `422` for semantic validation failures.
+- Use `400` for parse failures, including:
+  - malformed timestamp format,
+  - non-numeric `offset` / `limit`,
+  - missing required parameters (`from` or `to` absent) — these are treated as request-binding failures, not semantic validation.
+- Use `422` for semantic validation failures raised by the domain service (`QueryValidationException`).
+- Write-path domain validation that already uses `IllegalArgumentException` (e.g. `AuditEventService.record(...)`) keeps its existing `400` mapping. This feature does not remap that exception.
 
 ### Boundary Semantics
 
@@ -244,6 +282,15 @@ Planned persistence-layer changes:
 - Fetch `limit + 1` rows with `OFFSET` to determine whether another page exists.
 - Add the new composite indexes through Flyway.
 
+Only `search(...)` is changed. Other repository methods are explicitly left alone:
+
+- `latest()` continues to order by `sequence_no DESC`. It serves the hash-chain write path and must not be retargeted at the new search ordering.
+- `findOlderThan(...)` and `append(...)` are unchanged.
+
+### Tie-Break Change Notice
+
+The repository previously ordered search results by `timestamp DESC, sequence_no DESC`. The new canonical order is `timestamp DESC, id DESC`. This is a behavior change visible to existing search clients: events with identical timestamps may appear in a different relative order after this feature lands. The change is intentional — `id` is a stable per-event identifier exposed in the API, while `sequence_no` is an internal write-path concern — but it is worth flagging in the release notes for downstream consumers that compare result ordering between versions.
+
 The repository interface remains append-only from a write perspective. This feature adds only read/query behavior and does not introduce any `update` or `delete` capability.
 
 ## AGENTS.md Alignment
@@ -283,4 +330,9 @@ The implementation should add or update Testcontainers-based integration tests f
 - `resource + time range` search;
 - offset pagination across multiple pages for a fixed query window;
 - deterministic ordering when multiple events share the same timestamp;
-- validation failures returning `400` and `422` as designed.
+- validation failures returning `400` and `422` as designed;
+- response shape: `hash` and `sequenceNo` must be absent from search response items.
+
+### Test Clock Requirement
+
+The tie-break test requires multiple events with identical `timestamp` values. Wall-clock seeding cannot reliably produce identical timestamps at the microsecond resolution stored by Postgres, so the test setup must inject a controllable `Clock` (for example, a `TestClock` bean overriding `ClockConfig`) and seed events through `AuditEventService.record(...)` rather than direct SQL inserts. Direct inserts would bypass the append-only invariant and the hash chain, so the clock injection is the supported route.

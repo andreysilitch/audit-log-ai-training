@@ -67,13 +67,18 @@ As a security analyst, I want to paginate through a large result set without los
 - Authorization model implementation details beyond the assumption that read access is restricted to approved roles.
 - Client-side deduplication logic.
 
+## Resolved Decisions
+
+The following questions have been resolved and the answers are normative for this version. See `design.md` for full rationale.
+
+1. **`from` and `to` requirement.** Both `from` and `to` are required on every request. One-sided time bounds are not accepted.
+2. **`actor` / `resource` filters.** At least one of `actor` or `resource` must be present in addition to the time range. Each is individually optional, but they cannot both be omitted.
+3. **Canonical sort order.** Results are returned in `occurredAt DESC, id DESC` order. This is also the order used for pagination.
+4. **Response envelope.** The response is a page envelope with an `items` array and a `page` object carrying pagination metadata (`limit`, `offset`, `nextOffset`, `hasMore`). It is not a bare event list.
+5. **`outcome` filter.** `outcome` is only exposed in the response. It is not a query filter in this version.
+6. **`limit` bounds.** Default page size is `50` when `limit` is omitted. Maximum allowed `limit` is `200`.
+7. **`payload` vs `context`.** The endpoint returns a single field named `context`, aligned with the existing domain model and storage schema. `payload` is not returned.
+
 ## Open Questions
 
-1. Must `from` and `to` always be required, or can one-sided time bounds be allowed?
-2. Are `actor` and `resource` both optional filters, or must at least one of them be present in addition to the time range?
-3. What is the canonical sort order for results and cursor generation: `occurredAt ASC`, `occurredAt DESC`, or another ordering?
-4. What exact response envelope is required for pagination: bare event list, list plus `nextCursor`, or another structure?
-5. Should `outcome` also be exposed as a filter in the first version, or only in the response?
-6. What is the maximum allowed `limit`, and what default page size should the API apply when `limit` is omitted?
-7. Should the endpoint return the field name `payload`, `context`, or both, given the current domain terminology?
-8. What access-control and rate-limit requirements must be enforced for compliance, SRE, and security analyst roles?
+1. **Access control and rate limits.** Concrete access-control rules and rate-limit thresholds for compliance, SRE, and security analyst roles are out of scope for this version. The endpoint assumes authenticated callers with read permission on audit events; finer-grained policy is deferred.

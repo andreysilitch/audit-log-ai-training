@@ -1,2 +1,15 @@
 [features]
+# This Codex build exposes the lifecycle-hook feature as `hooks`.
 hooks = true
+
+[hooks]
+UserPromptSubmit = [
+  { matcher = "", hooks = [
+    { type = "command", command = "powershell -NoProfile -ExecutionPolicy Bypass -File .codex/hooks/spec-stop-gate.ps1", timeoutSec = 30, async = false, statusMessage = "Snapshotting .specs turn baseline" }
+  ] }
+]
+Stop = [
+  { matcher = "", hooks = [
+    { type = "command", command = "powershell -NoProfile -ExecutionPolicy Bypass -File .codex/hooks/spec-stop-gate.ps1", timeoutSec = 120, async = false, statusMessage = "Running spec self-eval gate" }
+  ] }
+]

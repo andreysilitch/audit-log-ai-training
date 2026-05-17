@@ -114,9 +114,15 @@ public class PostgresAuditEventRepository implements AuditEventRepository {
       sql.append(" AND resource = ?");
       args.add(c.resource());
     }
-    sql.append(" ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?");
+    if (c.cursor() != null) {
+      sql.append(" AND (timestamp < ? OR (timestamp = ? AND id < ?))");
+      Timestamp cursorTimestamp = Timestamp.from(c.cursor().occurredAt());
+      args.add(cursorTimestamp);
+      args.add(cursorTimestamp);
+      args.add(c.cursor().id());
+    }
+    sql.append(" ORDER BY timestamp DESC, id DESC LIMIT ?");
     args.add(c.limit() + 1);
-    args.add(c.offset());
 
     return jdbc.query(sql.toString(), rowMapper(), args.toArray());
   }

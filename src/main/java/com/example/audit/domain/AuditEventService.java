@@ -57,15 +57,13 @@ public class AuditEventService {
     if (criteria.limit() < 1 || criteria.limit() > 200) {
       throw new QueryValidationException("limit must be between 1 and 200");
     }
-    if (criteria.offset() < 0) {
-      throw new QueryValidationException("offset must be non-negative");
-    }
     List<AuditEvent> rows = repository.search(criteria);
     boolean hasMore = rows.size() > criteria.limit();
     List<AuditEvent> items =
         hasMore ? List.copyOf(rows.subList(0, criteria.limit())) : List.copyOf(rows);
-    Integer nextOffset = hasMore ? criteria.offset() + items.size() : null;
-    return new AuditEventPage(items, criteria.limit(), criteria.offset(), nextOffset, hasMore);
+    String nextCursor = hasMore ? AuditEventCursor.of(items.get(items.size() - 1)).encode() : null;
+    String currentCursor = criteria.cursor() == null ? null : criteria.cursor().encode();
+    return new AuditEventPage(items, criteria.limit(), currentCursor, nextCursor, hasMore);
   }
 
   private static void requireNonBlank(String value, String field) {

@@ -30,11 +30,11 @@ public record AuditEventSearchResponse(List<Item> items, Page page) {
     }
   }
 
-  public record Page(int limit, int offset, Integer nextOffset, boolean hasMore) {}
+  public record Page(int limit, String cursor, String nextCursor, boolean hasMore) {}
 
   public static AuditEventSearchResponse of(AuditEventPage p) {
     return new AuditEventSearchResponse(
         p.items().stream().map(Item::of).toList(),
-        new Page(p.limit(), p.offset(), p.nextOffset(), p.hasMore()));
+        new Page(p.limit(), p.cursor(), p.nextCursor(), p.hasMore()));
   }
 }

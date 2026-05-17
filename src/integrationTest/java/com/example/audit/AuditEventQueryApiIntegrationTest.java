@@ -132,31 +132,37 @@ class AuditEventQueryApiIntegrationTest {
     }
 
     java.util.Set<String> seenIds = new java.util.LinkedHashSet<>();
-    int offset = 0;
+    String cursor = null;
     boolean hasMore = true;
     int loops = 0;
     while (hasMore) {
-      MvcResult result =
-          mvc.perform(
-                  get("/audit-events")
-                      .param("actor", actor)
-                      .param("from", windowFrom())
-                      .param("to", windowTo())
-                      .param("limit", "3")
-                      .param("offset", Integer.toString(offset)))
-              .andExpect(status().isOk())
-              .andReturn();
+      var request =
+          get("/audit-events")
+              .param("actor", actor)
+              .param("from", windowFrom())
+              .param("to", windowTo())
+              .param("limit", "3");
+      if (cursor != null) {
+        request = request.param("cursor", cursor);
+      }
+      MvcResult result = mvc.perform(request).andExpect(status().isOk()).andReturn();
       JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
       JsonNode items = body.get("items");
       for (JsonNode item : items) {
         boolean fresh = seenIds.add(item.get("id").asText());
         assertThat(fresh).as("no duplicate id across pages").isTrue();
       }
+      JsonNode current = body.get("page").get("cursor");
+      if (cursor == null) {
+        assertThat(current.isNull()).isTrue();
+      } else {
+        assertThat(current.asText()).isEqualTo(cursor);
+      }
       hasMore = body.get("page").get("hasMore").asBoolean();
-      JsonNode next = body.get("page").get("nextOffset");
+      JsonNode next = body.get("page").get("nextCursor");
       if (hasMore) {
         assertThat(next.isNull()).isFalse();
-        offset = next.asInt();
+        cursor = next.asText();
       } else {
         assertThat(next.isNull()).isTrue();
       }
@@ -217,7 +223,8 @@ class AuditEventQueryApiIntegrationTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.items.length()").value(0))
         .andExpect(jsonPath("$.page.hasMore").value(false))
-        .andExpect(jsonPath("$.page.nextOffset").value(org.hamcrest.Matchers.nullValue()));
+        .andExpect(jsonPath("$.page.cursor").value(org.hamcrest.Matchers.nullValue()))
+        .andExpect(jsonPath("$.page.nextCursor").value(org.hamcrest.Matchers.nullValue()));
   }
 
   @Test
@@ -282,17 +289,15 @@ class AuditEventQueryApiIntegrationTest {
   }
 
   @Test
-  void negativeOffsetReturns422() throws Exception {
+  void malformedCursorReturns400() throws Exception {
     mvc.perform(
             get("/audit-events")
                 .param("actor", "alice")
                 .param("from", windowFrom())
                 .param("to", windowTo())
-                .param("offset", "-1"))
-        .andExpect(status().isUnprocessableEntity())
-        .andExpect(
-            jsonPath("$.message")
-                .value(org.hamcrest.Matchers.containsString("offset must be non-negative")));
+                .param("cursor", "not-a-valid-cursor"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error").value("cursor has invalid format"));
   }
 
   @Test
@@ -304,7 +309,7 @@ class AuditEventQueryApiIntegrationTest {
                 .param("to", windowTo()))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.page.limit").value(50))
-        .andExpect(jsonPath("$.page.offset").value(0));
+        .andExpect(jsonPath("$.page.cursor").value(org.hamcrest.Matchers.nullValue()));
   }
 
   @Test

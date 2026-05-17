@@ -13,7 +13,7 @@ The query API must help different operational roles answer different questions:
 The feature is a read-only HTTP endpoint, for example:
 
 ```http
-GET /audit-events?actor=u_42&resource=order/9f3b...&from=2026-04-01T00:00:00Z&to=2026-05-01T00:00:00Z&offset=0&limit=50
+GET /audit-events?actor=u_42&resource=order/9f3b...&from=2026-04-01T00:00:00Z&to=2026-05-01T00:00:00Z&cursor=eyJvY2N1cnJlZEF0IjoiMjAyNi0wNC0zMFQxMjozNDo1NloiLCJpZCI6IjEyMzQ1In0&limit=50
 ```
 
 ## User Stories with AC
@@ -24,12 +24,18 @@ As a compliance officer, I want to retrieve audit events for a specific actor wi
 
 #### Acceptance Criteria
 
-1. The system exposes a read-only `GET /audit-events` endpoint.
-2. The endpoint supports filtering by `actor`.
-3. The endpoint supports filtering by `from` and `to` as an explicit UTC time range.
-4. Returned events include enough information for investigation: event id, occurred timestamp, actor, resource, action, outcome, and context.
-5. Results are ordered deterministically so the same dataset can be reviewed consistently across repeated requests.
-6. If request parameters are invalid, the API returns a safe validation error without leaking SQL, stack traces, or internal database details.
+##### US1.AC1
+1. The API shall expose a read-only `GET /audit-events` endpoint.
+##### US1.AC2
+2. The API shall support filtering by `actor`.
+##### US1.AC3
+3. The API shall support filtering by `from` and `to` as an explicit UTC time range.
+##### US1.AC4
+4. The API shall return event id, occurred timestamp, actor, resource, action, outcome, and context for each matching event.
+##### US1.AC5
+5. The API shall return results in a deterministic order so repeated requests over the same dataset produce the same sequence.
+##### US1.AC6
+6. If request parameters are invalid, the API shall return a safe validation error without leaking SQL text, stack traces, or internal database details.
 
 ### User Story 2: Incident reconstruction by resource and time range
 
@@ -37,24 +43,35 @@ As an SRE, I want to retrieve audit events for a resource within a time range so
 
 #### Acceptance Criteria
 
-1. The endpoint supports filtering by `resource`.
-2. The endpoint supports combining `resource` with `from` and `to`.
-3. Results are sorted in a deterministic chronological order that allows timeline reconstruction.
-4. The response preserves server-recorded event timestamps as the source of truth.
-5. If no matching events exist, the API returns an empty result set rather than an error.
+##### US2.AC1
+1. The API shall support filtering by `resource`.
+##### US2.AC2
+2. The API shall support combining `resource` with `from` and `to`.
+##### US2.AC3
+3. The API shall return results in a deterministic chronological order that supports timeline reconstruction.
+##### US2.AC4
+4. The API shall preserve server-recorded event timestamps as the source of truth in the response.
+##### US2.AC5
+5. If no matching events exist, the API shall return an empty result set instead of an error.
 
-### User Story 3: Stable pagination for large investigations
+### User Story 3: Stable cursor-based pagination for large investigations
 
 As a security analyst, I want to paginate through a large result set without loss or duplication so that I can review all matching audit events safely.
 
 #### Acceptance Criteria
 
-1. The endpoint supports offset-based pagination through `offset` and `limit`, where `offset` is a zero-based position and `limit` is the maximum number of events to return in one page.
-2. Pagination must be stable: when a client follows the returned continuation values through the same query scope, events are not skipped or duplicated between pages.
-3. The API returns at most `limit` events in one page.
-4. The API returns a continuation value (such as a `nextOffset`) when more results are available, and signals when no further pages exist.
-5. The API defines a deterministic tie-break strategy for events with identical timestamps, so page boundaries remain stable.
-6. The API rejects invalid pagination parameters (for example, a negative `offset` or a `limit` outside the allowed range) with a safe client error.
+##### US3.AC1
+1. The API shall support cursor-based pagination through `cursor` and `limit`, where `cursor` identifies the continuation position in the deterministic result order and `limit` is the maximum number of events to return in one page.
+##### US3.AC2
+2. When a client follows returned cursor values through the same query scope, the API shall paginate without skipping or duplicating events between pages.
+##### US3.AC3
+3. The API shall return at most `limit` events in one page.
+##### US3.AC4
+4. When more results are available, the API shall return a continuation value such as `nextCursor` and shall signal when no further pages exist.
+##### US3.AC5
+5. The API shall define a deterministic tie-break strategy for events with identical timestamps so page boundaries remain stable.
+##### US3.AC6
+6. If pagination parameters are invalid, the API shall return a safe client error for cases such as a malformed `cursor` or a `limit` outside the allowed range.
 
 ## Out of Scope
 
@@ -71,14 +88,14 @@ As a security analyst, I want to paginate through a large result set without los
 
 The following questions have been resolved and the answers are normative for this version. See `design.md` for full rationale.
 
-1. **`from` and `to` requirement.** Both `from` and `to` are required on every request. One-sided time bounds are not accepted.
-2. **`actor` / `resource` filters.** At least one of `actor` or `resource` must be present in addition to the time range. Each is individually optional, but they cannot both be omitted.
-3. **Canonical sort order.** Results are returned in `occurredAt DESC, id DESC` order. This is also the order used for pagination.
-4. **Response envelope.** The response is a page envelope with an `items` array and a `page` object carrying pagination metadata (`limit`, `offset`, `nextOffset`, `hasMore`). It is not a bare event list.
-5. **`outcome` filter.** `outcome` is only exposed in the response. It is not a query filter in this version.
-6. **`limit` bounds.** Default page size is `50` when `limit` is omitted. Maximum allowed `limit` is `200`.
-7. **`payload` vs `context`.** The endpoint returns a single field named `context`, aligned with the existing domain model and storage schema. `payload` is not returned.
+- **`from` and `to` requirement.** Both `from` and `to` are required on every request. One-sided time bounds are not accepted.
+- **`actor` / `resource` filters.** At least one of `actor` or `resource` must be present in addition to the time range. Each is individually optional, but they cannot both be omitted.
+- **Canonical sort order.** Results are returned in `occurredAt DESC, id DESC` order. This is also the order used for pagination.
+- **Response envelope.** The response is a page envelope with an `items` array and a `page` object carrying pagination metadata (`limit`, `cursor`, `nextCursor`, `hasMore`). It is not a bare event list.
+- **`outcome` filter.** `outcome` is only exposed in the response. It is not a query filter in this version.
+- **`limit` bounds.** Default page size is `50` when `limit` is omitted. Maximum allowed `limit` is `200`.
+- **`payload` vs `context`.** The endpoint returns a single field named `context`, aligned with the existing domain model and storage schema. `payload` is not returned.
 
 ## Open Questions
 
-1. **Access control and rate limits.** Concrete access-control rules and rate-limit thresholds for compliance, SRE, and security analyst roles are out of scope for this version. The endpoint assumes authenticated callers with read permission on audit events; finer-grained policy is deferred.
+- **Access control and rate limits.** Concrete access-control rules and rate-limit thresholds for compliance, SRE, and security analyst roles are out of scope for this version. The endpoint assumes authenticated callers with read permission on audit events; finer-grained policy is deferred.

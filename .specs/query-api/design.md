@@ -6,6 +6,10 @@
 
 `GET /audit-events`
 
+### Read-Only Audit Events Endpoint
+
+The query API exposes only `GET /audit-events` for this feature. No write capability is introduced on the read path.
+
 ### Query Parameters
 
 | Name | Required | Type | Notes |
@@ -14,8 +18,24 @@
 | `to` | yes | ISO-8601 UTC timestamp | Exclusive upper bound of the search window. |
 | `actor` | conditional | string | Optional by itself, but at least one of `actor` or `resource` must be provided. |
 | `resource` | conditional | string | Optional by itself, but at least one of `actor` or `resource` must be provided. |
-| `offset` | no | integer | Zero-based position of the first item to return. Default `0`. |
+| `cursor` | no | string | Opaque continuation token for keyset pagination. Omit for the first page. |
 | `limit` | no | integer | Page size. Default `50`, maximum `200`. |
+
+### Actor Filtering
+
+The API accepts `actor` as an optional filter parameter and applies it exactly as part of the search criteria.
+
+### Resource Filtering
+
+The API accepts `resource` as an optional filter parameter and applies it exactly as part of the search criteria.
+
+### UTC Time Range Filtering
+
+The API requires `from` and `to` and interprets both values as UTC timestamps for the search window.
+
+### Combining Resource with Time Range
+
+The API supports combining `resource` with `from` and `to` inside the same query so incident reconstruction stays scoped to one resource and one time window.
 
 ### Response Shape
 
@@ -38,12 +58,24 @@ The response is a page envelope rather than a bare array so the API can carry pa
   ],
   "page": {
     "limit": 50,
-    "offset": 0,
-    "nextOffset": 50,
+    "cursor": null,
+    "nextCursor": "eyJvY2N1cnJlZEF0IjoiMjAyNi0wNC0xN1QxMTowMjoxNFoiLCJpZCI6IjdkNmQwZjNlLTIxYjItNGQ3YS05YzY0LTFmN2I5Zjk4YTJkMyJ9",
     "hasMore": true
   }
 }
 ```
+
+### Event ID Timestamp Actor Resource Action Outcome and Context Fields
+
+Each response item includes `id`, `occurredAt`, `actor`, `resource`, `action`, `outcome`, and `context`.
+
+### Server-Recorded Event Timestamps
+
+The response maps `occurredAt` from the persisted server-recorded `timestamp` field and never from a client-provided timestamp.
+
+### Empty Result Set Instead of Error
+
+When no events match the query, the API returns `200 OK` with `"items": []` and page metadata rather than a domain error.
 
 ### Contract Decisions
 
@@ -65,8 +97,8 @@ The response is a page envelope rather than a bare array so the API can carry pa
 | `outcome` | string | Enum name, e.g. `"SUCCESS"`, `"FAILURE"`. Serialized via the enum's `name()`. |
 | `context` | JSON object | Free-form JSON; mapped to `JsonNode` in Java. May be empty. |
 | `page.limit` | integer | Echoes the effective `limit`. |
-| `page.offset` | integer | Echoes the effective `offset`. |
-| `page.nextOffset` | integer or `null` | `null` when `hasMore` is `false`. The field is always present so clients can rely on its key. |
+| `page.cursor` | string or `null` | Echoes the cursor supplied by the client, or `null` on the first page. |
+| `page.nextCursor` | string or `null` | `null` when `hasMore` is `false`. The field is always present so clients can rely on its key. |
 | `page.hasMore` | boolean | Whether more results exist beyond this page. |
 
 ### Status Codes
@@ -74,7 +106,7 @@ The response is a page envelope rather than a bare array so the API can carry pa
 | Status | When |
 | --- | --- |
 | `200 OK` | Search completed successfully, including empty result sets. |
-| `400 Bad Request` | The request cannot be parsed, for example malformed timestamp format or a non-numeric `offset` value. |
+| `400 Bad Request` | The request cannot be parsed, for example malformed timestamp format, malformed cursor, or a non-numeric `limit` value. |
 | `401 Unauthorized` | The caller is not authenticated. |
 | `403 Forbidden` | The caller is authenticated but does not have permission to read audit events. |
 | `422 Unprocessable Entity` | The request is syntactically valid but violates query rules, for example missing both `actor` and `resource`, `from >= to`, blank filter values, or `limit` outside the allowed range. |
@@ -103,11 +135,23 @@ At the database level this maps to:
 
 `timestamp DESC, id DESC`
 
+### Deterministic Result Order for Repeated Requests
+
+The API uses one canonical order for repeated requests over the same dataset so clients can review the same sequence consistently.
+
+### Deterministic Chronological Order for Timeline Reconstruction
+
+The descending event-time order supports timeline reconstruction by presenting the latest matching events first while keeping a stable chronology.
+
 ### Why This Order
 
 - Recent-first ordering is better for the most common operational workflow: start with the latest suspicious or incident-related activity.
 - The secondary `id` sort is required to make the order total and deterministic when multiple events share the same timestamp.
 - Deterministic ordering is mandatory for safe pagination and for repeatable compliance review.
+
+### Deterministic Tie-Break Strategy
+
+Events with identical timestamps are disambiguated by `id DESC` so page boundaries and repeated reads remain stable.
 
 ### Tie-Breaker Rule
 
@@ -119,36 +163,54 @@ This tie-breaker is not intended to carry business meaning. Its role is only to 
 
 ### Chosen Strategy
 
-Offset pagination using `offset` and `limit`.
+Cursor-based pagination using `cursor` and `limit`.
+
+### Cursor and Limit Pagination
+
+The pagination contract is expressed only through `cursor` and `limit`; the API does not expose row offsets.
+
+### Cursor Format
+
+- The cursor is opaque at the HTTP contract level.
+- Internally it encodes the canonical sort key of the last item returned on the previous page: `occurredAt` and `id`.
+- The server may serialize that payload as Base64URL JSON or an equivalent stable encoding.
+- Clients must treat the cursor as an opaque token and must not construct or modify it manually.
 
 ### Pagination Semantics
 
-- First page: client sends no `offset`, or `offset=0`.
-- Next page: client sends the `nextOffset` returned by the previous page.
-- The server applies the original filters and skips the first `offset` rows in canonical order.
+- First page: client omits `cursor`.
+- Next page: client sends the `nextCursor` returned by the previous page.
+- The server applies the original filters and adds a keyset predicate based on the canonical sort order encoded in the cursor.
+
+### Stable Pagination Across Query Scope
+
+Clients must keep `actor`, `resource`, `from`, `to`, and `limit` fixed while following returned cursor values so the traversal remains within one deterministic query scope.
 
 For descending order, the repository query is:
 
 ```sql
+WHERE (
+    timestamp < :cursorTimestamp
+    OR (timestamp = :cursorTimestamp AND id < :cursorId)
+)
 ORDER BY timestamp DESC, id DESC
-LIMIT :limitPlusOne OFFSET :offset
+LIMIT :limitPlusOne
 ```
 
-### Why Offset Pagination
+The keyset predicate is only applied when a cursor is present. The first page uses the same filters and sort order without that extra predicate.
 
-- It is simple for clients to understand and debug.
-- It aligns with the current repository and controller shape, reducing implementation complexity for this version.
-- It remains usable for bounded audit investigations because the API requires a fixed `from/to` window and deterministic ordering.
+### Why Cursor Pagination
+
+- It preserves stable traversal under deterministic ordering without row skipping caused by shifting row positions.
+- It aligns with the requirement for stable pagination over large audit investigations.
+- It keeps the contract explicit while avoiding exposure of internal row positions.
 
 ### Stability and Trade-Offs
-
-Offset pagination is less robust than cursor pagination when the result set changes during traversal. This design therefore makes the guarantee more specific:
 
 - No loss and no duplication are expected when the client paginates through a stable query scope.
 - The query scope is more likely to stay stable because the API requires fixed `from` and `to` bounds.
 - The strongest operational pattern is to use a closed historical window where `to` is already in the past.
-
-If clients must paginate through actively changing windows near the current time, a future revision should move to cursor pagination.
+- Even with cursor pagination, clients should keep `from`, `to`, `actor`, and `resource` fixed across page requests; changing filters invalidates the traversal.
 
 ### Interaction With the Required Time Range
 
@@ -158,12 +220,20 @@ The request must always include `from` and `to`, and both values remain fixed ac
 - predictable performance;
 - stable pagination semantics.
 
-### `hasMore` and `nextOffset`
+### `hasMore` and `nextCursor`
 
 - The repository fetches `limit + 1` rows.
 - If more than `limit` rows are returned, the extra row is trimmed and used only to compute `hasMore = true`. The response `items` array contains at most `limit` entries.
-- `nextOffset` is computed as `offset + items.size()` after trimming. Because trimming caps `items` at `limit` when `hasMore` is `true`, this is equivalent to `offset + limit` in that case.
-- If there are no more rows, `nextOffset` is `null` and `hasMore` is `false`. The `nextOffset` key is still serialized (as `null`) so the response shape is stable.
+- `nextCursor` is derived from the last item in the trimmed `items` array when `hasMore` is `true`.
+- If there are no more rows, `nextCursor` is `null` and `hasMore` is `false`. The `nextCursor` key is still serialized as `null` so the response shape is stable.
+
+### At-Most Limit Events Per Page
+
+Each page contains no more than the effective `limit`, even when the repository reads one extra row internally to detect continuation.
+
+### nextCursor Continuation Value and hasMore Signaling
+
+When additional rows exist after trimming, the response returns `nextCursor` and `hasMore = true`; otherwise it returns `nextCursor = null` and `hasMore = false`.
 
 ## Indexes
 
@@ -215,7 +285,11 @@ The controller must validate HTTP syntax, but the domain service must also enfor
 - If provided, `actor` must not be blank.
 - If provided, `resource` must not be blank.
 - `limit` must be between `1` and `200`.
-- `offset`, if provided, must be a non-negative integer.
+- `cursor`, if provided, must be a non-blank, decodable continuation token with both `occurredAt` and `id`.
+
+### Invalid Pagination Parameters
+
+Malformed `cursor` values and out-of-range `limit` values are rejected during validation before the repository executes the search.
 
 ### Validation Order
 
@@ -224,7 +298,8 @@ Semantic validation in the domain service runs in this fixed order so the first 
 1. time range presence and ordering (`from`/`to` non-null, `from < to`);
 2. filter mutex (at least one of `actor` or `resource` is present and non-blank);
 3. individual blank checks (`actor` not blank if provided, `resource` not blank if provided);
-4. numeric bounds (`limit` in `[1, 200]`, `offset >= 0`).
+4. numeric bounds (`limit` in `[1, 200]`);
+5. cursor decoding and shape validation when `cursor` is provided.
 
 When both `actor` and `resource` are present but blank, the mutex rule fires first ("at least one of actor or resource is required") rather than the individual blank message, because that is the more actionable client-facing signal.
 
@@ -236,10 +311,16 @@ Semantic validation failures are signaled by a dedicated unchecked exception, e.
 
 - Use `400` for parse failures, including:
   - malformed timestamp format,
-  - non-numeric `offset` / `limit`,
-  - missing required parameters (`from` or `to` absent) — these are treated as request-binding failures, not semantic validation.
+  - malformed cursor payload,
+  - non-numeric `limit`,
+  - missing required parameters (`from` or `to` absent); these are treated as request-binding failures, not semantic validation.
 - Use `422` for semantic validation failures raised by the domain service (`QueryValidationException`).
 - Write-path domain validation that already uses `IllegalArgumentException` (e.g. `AuditEventService.record(...)`) keeps its existing `400` mapping. This feature does not remap that exception.
+
+### Safe Validation Errors
+
+Validation failures return compact client-facing errors and must not leak SQL text, stack traces, schema details, or internal database identifiers.
+
 
 ### Boundary Semantics
 
@@ -254,7 +335,7 @@ This choice avoids overlap when clients split time windows into adjacent ranges.
 
 Planned API-layer changes:
 
-- Keep `offset` in the `GET /audit-events` contract and remove any cursor-specific assumptions from the design.
+- Expose `cursor` and `limit` on `GET /audit-events`.
 - Replace the bare `List<AuditEventResponse>` response with a page envelope, for example `AuditEventSearchResponse`.
 - Keep `AuditEventController` focused on request binding, HTTP status codes, and response serialization.
 - Extend `ApiExceptionHandler` so semantic query errors can return `422`.
@@ -263,23 +344,24 @@ Planned API-layer changes:
 
 Planned domain-layer changes:
 
-- Add domain validation for the new query rules:
-  `from/to` required, `from < to`, at least one of `actor/resource`, limit range, non-negative offset.
+- Add domain validation for the new query rules: `from/to` required, `from < to`, at least one of `actor/resource`, limit range, valid cursor when provided.
 - Keep the search use case in `AuditEventService` so invariants are enforced outside the controller.
 
 Recommended domain objects:
 
 - `AuditEventSearchCriteria`
 - `AuditEventPage`
+- `AuditEventCursor`
 
 ### Infrastructure Layer
 
 Planned persistence-layer changes:
 
-- Keep `PostgresAuditEventRepository.search(...)` on offset pagination.
+- Implement `PostgresAuditEventRepository.search(...)` with keyset pagination.
 - Keep filtering on `timestamp`, `actor`, and `resource`.
 - Order by `timestamp DESC, id DESC`.
-- Fetch `limit + 1` rows with `OFFSET` to determine whether another page exists.
+- Apply the cursor predicate when `cursor` is present.
+- Fetch `limit + 1` rows to determine whether another page exists.
 - Add the new composite indexes through Flyway.
 
 Only `search(...)` is changed. Other repository methods are explicitly left alone:
@@ -289,7 +371,7 @@ Only `search(...)` is changed. Other repository methods are explicitly left alon
 
 ### Tie-Break Change Notice
 
-The repository previously ordered search results by `timestamp DESC, sequence_no DESC`. The new canonical order is `timestamp DESC, id DESC`. This is a behavior change visible to existing search clients: events with identical timestamps may appear in a different relative order after this feature lands. The change is intentional — `id` is a stable per-event identifier exposed in the API, while `sequence_no` is an internal write-path concern — but it is worth flagging in the release notes for downstream consumers that compare result ordering between versions.
+The repository previously ordered search results by `timestamp DESC, sequence_no DESC`. The new canonical order is `timestamp DESC, id DESC`. This is a behavior change visible to existing search clients: events with identical timestamps may appear in a different relative order after this feature lands. The change is intentional: `id` is a stable per-event identifier exposed in the API, while `sequence_no` is an internal write-path concern. It is worth flagging in the release notes for downstream consumers that compare result ordering between versions.
 
 The repository interface remains append-only from a write perspective. This feature adds only read/query behavior and does not introduce any `update` or `delete` capability.
 
@@ -328,7 +410,7 @@ The implementation should add or update Testcontainers-based integration tests f
 
 - `actor + time range` search;
 - `resource + time range` search;
-- offset pagination across multiple pages for a fixed query window;
+- cursor-based pagination across multiple pages for a fixed query window;
 - deterministic ordering when multiple events share the same timestamp;
 - validation failures returning `400` and `422` as designed;
 - response shape: `hash` and `sequenceNo` must be absent from search response items.

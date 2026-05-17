@@ -2,70 +2,66 @@
 
 ## Context
 
-`ApiExceptionHandler` currently maps `IllegalArgumentException` to 400 and treats all validation failures as parse errors. Spec separates the two: parse failures (malformed timestamp, non-numeric offset, missing required parameter) stay 400; semantic validation failures (`from >= to`, missing actor+resource, blank filter, limit out of range) become 422. Error body: `{"error": "validation_failed", "message": "..."}`.
+The spec splits failures into two classes:
+
+- parse / binding errors stay `400`;
+- semantic query validation errors become `422`.
+
+With cursor pagination, malformed cursor payloads belong to the parse path.
 
 ## Dependencies
 
-- T2 (`QueryValidationException` exists and is thrown by domain).
+- T2, because semantic query validation uses `QueryValidationException`.
+- T5, because the controller now parses cursor values explicitly.
 
 ## Files
 
 Modify:
-- `src/main/java/com/example/audit/api/ApiExceptionHandler.java`.
+- `src/main/java/com/example/audit/api/ApiExceptionHandler.java`
 
 ## Implementation
 
-Add a handler; leave the rest untouched.
+### Semantic search validation
+
+Keep:
 
 ```java
 @ExceptionHandler(QueryValidationException.class)
-public ResponseEntity<Map<String, Object>> handleQueryValidation(QueryValidationException ex) {
-  return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
-      .body(Map.of("error", "validation_failed", "message", ex.getMessage()));
-}
+ResponseEntity<Map<String, Object>> ...
 ```
 
-Import `com.example.audit.domain.QueryValidationException`.
+mapping to:
 
-### Decision: keep `IllegalArgumentException → 400`
+```json
+{"error":"validation_failed","message":"..."}
+```
 
-Existing write-path validation (`AuditEventService.record()`) uses `IllegalArgumentException`. Remapping it would broaden scope beyond the spec and could break POST tests. Only the new search-path semantic errors use `QueryValidationException → 422`.
+with HTTP `422`.
 
-### Decision: parse errors stay 400
+### Parse-path behavior
 
-Existing handlers cover the parse path:
+Keep existing `400` behavior for:
 
-| Exception | Status | Source |
-|-----------|--------|--------|
-| `MissingServletRequestParameterException` | 400 | missing `from`/`to` |
-| `MethodArgumentTypeMismatchException` | 400 | malformed `from`/`to`/`offset` |
-| `HttpMessageNotReadableException` | 400 | malformed JSON body (POST) |
-| `MethodArgumentNotValidException` | 400 | bean validation (POST) |
-| `IllegalArgumentException` | 400 | legacy domain errors (write path) |
-| `QueryValidationException` | **422** | new — semantic search errors |
-| `Exception` | 500 | catch-all |
+- missing `from` / `to`;
+- malformed `from` / `to`;
+- malformed JSON on POST;
+- malformed cursor payload;
+- any legacy `IllegalArgumentException` raised on the write path.
+
+The simplest cursor-path implementation is to let cursor decoding throw `IllegalArgumentException("cursor has invalid format")`, which is already safe to map to `400`.
 
 ## DoD checklist
 
-- [ ] `QueryValidationException` exists (from T2) and is thrown by domain.
-- [ ] Handler maps `QueryValidationException` → 422.
-- [ ] Parse errors (malformed timestamp, non-numeric offset) → 400.
-- [ ] Error body: `{"error": "validation_failed", "message": "..."}`.
-- [ ] Integration tests verify 400 vs 422 split (in T7).
+- [ ] `QueryValidationException` maps to `422`.
+- [ ] Missing required request params stay `400`.
+- [ ] Malformed timestamps stay `400`.
+- [ ] Malformed cursor stays `400`.
+- [ ] Write-path `IllegalArgumentException` behavior stays unchanged.
+- [ ] Search semantic validation remains `422`.
 
 ## Verification
 
 ```bash
+./gradlew integrationTest --tests com.example.audit.AuditEventQueryApiIntegrationTest
 ./gradlew test
-./gradlew integrationTest
-```
-
-Quick manual checks once running:
-
-```bash
-# Parse error → 400
-curl -i 'http://localhost:8080/audit-events?from=not-a-date&to=2026-01-01T00:00:00Z&actor=alice'
-
-# Semantic error → 422
-curl -i 'http://localhost:8080/audit-events?from=2026-02-01T00:00:00Z&to=2026-01-01T00:00:00Z&actor=alice'
 ```

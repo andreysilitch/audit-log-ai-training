@@ -1,78 +1,99 @@
-# TASK-3 Plan: `AuditEventPage` + Service Pagination Return Type
+# TASK-3 Plan: `AuditEventPage` and Cursor Pagination Metadata
 
 ## Context
 
-Service currently returns `List<AuditEvent>` — no way to expose `hasMore`/`nextOffset` to the API layer. Spec response envelope needs these fields. Add a domain record so pagination policy stays in the domain (AGENTS.md rule 1).
+The service must no longer expose pagination state as row offsets. The updated spec requires a page envelope carrying:
+
+- `items`;
+- `limit`;
+- `cursor` for the current request, or `null` on the first page;
+- `nextCursor` when another page exists, otherwise `null`;
+- `hasMore`.
+
+The repository contract can stay `List<AuditEvent>` as long as it returns up to `limit + 1` rows for continuation detection.
 
 ## Dependencies
 
-- T2 (validation must run before pagination logic).
+- T2, because validation runs before page construction.
 
 ## Files
 
 Create:
-- `src/main/java/com/example/audit/domain/AuditEventPage.java`
+- `src/main/java/com/example/audit/domain/AuditEventCursor.java`
 
 Modify:
-- `src/main/java/com/example/audit/domain/AuditEventService.java` — change return type, add page-building logic.
-- `src/test/java/com/example/audit/domain/AuditEventServiceTest.java` — add pagination cases.
-
-Note: `AuditEventRepository.search()` signature stays `List<AuditEvent>` — the contract becomes "returns up to `limit+1` rows" (actual SQL change in T4).
+- `src/main/java/com/example/audit/domain/AuditEventPage.java`
+- `src/main/java/com/example/audit/domain/AuditEventSearchCriteria.java`
+- `src/main/java/com/example/audit/domain/AuditEventService.java`
+- `src/test/java/com/example/audit/domain/AuditEventServiceTest.java`
 
 ## Implementation
+
+### `AuditEventCursor`
+
+Add a domain cursor object that captures the canonical sort key:
+
+```java
+public record AuditEventCursor(Instant occurredAt, UUID id) {
+  public static AuditEventCursor of(AuditEvent event) { ... }
+  public String encode() { ... }
+  public static AuditEventCursor decode(String encoded) { ... }
+}
+```
+
+The token remains opaque at the API boundary. Internally it must round-trip `occurredAt` and `id`.
 
 ### `AuditEventPage`
 
 ```java
-package com.example.audit.domain;
-
-import java.util.List;
-
 public record AuditEventPage(
     List<AuditEvent> items,
     int limit,
-    int offset,
-    Integer nextOffset,
+    String cursor,
+    String nextCursor,
     boolean hasMore) {}
 ```
 
-`nextOffset` is `Integer` (not `int`) so it can be `null` when `hasMore == false`. Aligns with JSON contract — Jackson serialises `null` field which is acceptable per spec; alternative is `@JsonInclude(NON_NULL)` if the spec example treats `null` as omitted.
+### `AuditEventService.search()`
 
-### `AuditEventService.search()` pagination body
-
-After the validation block (T2):
+Representative pagination logic:
 
 ```java
-List<AuditEvent> rows = repository.search(c);          // up to limit+1
-boolean hasMore = rows.size() > c.limit();
-List<AuditEvent> items = hasMore ? List.copyOf(rows.subList(0, c.limit())) : rows;
-Integer nextOffset = hasMore ? c.offset() + c.limit() : null;
-return new AuditEventPage(items, c.limit(), c.offset(), nextOffset, hasMore);
+List<AuditEvent> rows = repository.search(criteria); // up to limit + 1
+boolean hasMore = rows.size() > criteria.limit();
+List<AuditEvent> items =
+    hasMore ? List.copyOf(rows.subList(0, criteria.limit())) : List.copyOf(rows);
+String nextCursor =
+    hasMore ? AuditEventCursor.of(items.get(items.size() - 1)).encode() : null;
+String currentCursor =
+    criteria.cursor() == null ? null : criteria.cursor().encode();
+return new AuditEventPage(items, criteria.limit(), currentCursor, nextCursor, hasMore);
 ```
 
-Return type updates to `AuditEventPage`.
+## Unit tests
 
-### Unit tests (additions)
+Add or update page-shape cases:
 
-| Case | Repo returns | Expected page |
-|------|--------------|---------------|
-| empty | `[]` | `items=[], hasMore=false, nextOffset=null` |
-| partial page (size < limit) | 3 rows, `limit=10` | `hasMore=false, nextOffset=null` |
-| exact page (size == limit) | 10 rows, `limit=10` | `hasMore=false, nextOffset=null` |
-| has more (size == limit+1) | 11 rows, `limit=10`, `offset=20` | `items.size()=10, hasMore=true, nextOffset=30` |
+| Case | Repo returns | Expected |
+|---|---|---|
+| empty page | `[]` | `items=[]`, `hasMore=false`, `nextCursor=null` |
+| partial page | 3 rows with `limit=10` | `hasMore=false`, `nextCursor=null` |
+| exact page | 10 rows with `limit=10` | `hasMore=false`, `nextCursor=null` |
+| continuation | 11 rows with `limit=10` | `items.size()=10`, `hasMore=true`, `nextCursor` equals last trimmed item cursor |
+| echo current cursor | valid input cursor | page `cursor` matches encoded input cursor |
 
 ## DoD checklist
 
-- [ ] Record `AuditEventPage` exists with fields `items, limit, offset, nextOffset, hasMore`.
+- [ ] `AuditEventCursor` exists and can encode/decode `occurredAt` and `id`.
+- [ ] `AuditEventPage` stores `items`, `limit`, `cursor`, `nextCursor`, `hasMore`.
+- [ ] `AuditEventSearchCriteria` carries the parsed cursor object rather than an offset.
 - [ ] `AuditEventService.search()` returns `AuditEventPage`.
-- [ ] `nextOffset = offset + items.size()` when `hasMore`; else `null`. *(Equivalently `offset + limit` because items are trimmed to limit on `hasMore`.)*
-- [ ] Unit tests verify `hasMore` and `nextOffset` calculation.
+- [ ] `nextCursor` is derived from the last returned item when `hasMore` is true.
+- [ ] Unit tests verify page metadata and cursor derivation.
 
 ## Verification
 
 ```bash
-./gradlew compileJava            # downstream compile errors flagged early (controller still using List)
+./gradlew compileJava
 ./gradlew test --tests com.example.audit.domain.AuditEventServiceTest
 ```
-
-Controller will fail to compile until T5 updates the caller — expected; complete T5 next.

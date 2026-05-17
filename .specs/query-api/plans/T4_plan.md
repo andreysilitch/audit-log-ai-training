@@ -1,69 +1,76 @@
-# TASK-4 Plan: Repository Pagination + Tie-Break Ordering
+# TASK-4 Plan: Repository Keyset Pagination and Tie-Break Ordering
 
 ## Context
 
-Current `PostgresAuditEventRepository.search()` (lines 98-122) orders by `timestamp DESC, sequence_no DESC` with `LIMIT ? OFFSET ?`. Spec mandates `timestamp DESC, id DESC` and fetching `limit+1` rows so the service can detect `hasMore`. `latest()` (line 125) is part of the hash-chain write path and stays on `sequence_no DESC`.
+The current repository search path still reflects offset pagination assumptions. The updated spec requires keyset pagination over the canonical order:
+
+- `ORDER BY timestamp DESC, id DESC`;
+- when a cursor is present, continue with
+  `timestamp < cursorTimestamp OR (timestamp = cursorTimestamp AND id < cursorId)`;
+- fetch `limit + 1` rows so the service can compute `hasMore` and `nextCursor`.
+
+`latest()` remains on `sequence_no DESC` because it belongs to the hash-chain write path.
 
 ## Dependencies
 
-- T1 (indexes exist for efficient sorted scans).
-- T3 (service expects up-to-`limit+1` rows).
+- T1 for supporting indexes.
+- T3 because the service consumes up-to-`limit+1` rows and emits cursor metadata.
 
 ## Files
 
 Modify:
-- `src/main/java/com/example/audit/persistence/PostgresAuditEventRepository.java` — `search()` only.
+- `src/main/java/com/example/audit/persistence/PostgresAuditEventRepository.java`
+- `src/integrationTest/java/com/example/audit/PostgresAuditEventRepositoryIntegrationTest.java`
 
-Create (or extend existing):
-- `src/integrationTest/java/com/example/audit/PostgresAuditEventRepositoryIntegrationTest.java` — add deterministic-order test case.
-
-Do not modify: `latest()`, `findOlderThan()`, `append()`.
+Do not modify:
+- `latest()`
+- `findOlderThan()`
+- `append()`
 
 ## Implementation
 
-### Repository SQL change
+### Repository SQL shape
 
 In `search()`:
 
 ```java
-sql.append(" ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?");
-args.add(c.limit() + 1);
-args.add(c.offset());
+if (criteria.cursor() != null) {
+  sql.append(" AND (timestamp < ? OR (timestamp = ? AND id < ?))");
+  args.add(Timestamp.from(criteria.cursor().occurredAt()));
+  args.add(Timestamp.from(criteria.cursor().occurredAt()));
+  args.add(criteria.cursor().id());
+}
+sql.append(" ORDER BY timestamp DESC, id DESC LIMIT ?");
+args.add(criteria.limit() + 1);
 ```
 
-No other changes — filters and bindings unchanged.
+The half-open time window remains:
 
-### Integration test
+```sql
+timestamp >= :from AND timestamp < :to
+```
 
-`deterministicTieBreakOnIdenticalTimestamp`:
+### Integration tests
 
-1. Use a fixed `Clock` (or stub via `ClockConfig`) so three appended events share the same `timestamp` (truncated to micros).
-2. Run `repository.search(criteria)` with `actor=...` matching all three.
-3. Assert returned `id` order matches `id DESC` (sort UUIDs as strings descending).
-4. Run search again; assert identical sequence (stable).
+Keep the tie-break test and add keyset traversal assertions:
 
-Sanity test: when 6 rows match and `limit=5`, repo returns 6 rows so the service can detect `hasMore`.
+1. first query with no cursor returns `limit + 1` rows when overflow exists;
+2. derive the next cursor from the last trimmed item;
+3. second query with that cursor continues without overlap;
+4. repeat traversal and confirm stable ordering.
 
 ## DoD checklist
 
 - [ ] `search()` orders by `timestamp DESC, id DESC`.
-- [ ] `search()` binds `limit + 1` as the LIMIT.
+- [ ] `search()` applies the keyset predicate when a cursor is present.
+- [ ] `search()` binds `limit + 1` as the SQL limit.
 - [ ] Tie-break uses `id`, not `sequence_no`.
-- [ ] Integration test asserts deterministic order on identical timestamps.
+- [ ] Integration test verifies deterministic order for identical timestamps.
+- [ ] Integration test verifies cursor-based continuation across pages.
 - [ ] `latest()` still orders by `sequence_no DESC`.
 
 ## Verification
 
 ```bash
 ./gradlew integrationTest --tests com.example.audit.PostgresAuditEventRepositoryIntegrationTest
-./gradlew test
-```
-
-Verify with EXPLAIN against Postgres that the new index is used:
-
-```sql
-EXPLAIN SELECT id, timestamp FROM audit_events
-WHERE actor='alice' AND timestamp >= '...' AND timestamp < '...'
-ORDER BY timestamp DESC, id DESC LIMIT 51 OFFSET 0;
--- expect Index Scan on idx_audit_events_actor_timestamp_id
 ```

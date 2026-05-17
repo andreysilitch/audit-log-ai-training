@@ -1,6 +1,7 @@
 package com.example.audit.api;
 
 import com.example.audit.domain.AuditEvent;
+import com.example.audit.domain.AuditEventCursor;
 import com.example.audit.domain.AuditEventSearchCriteria;
 import com.example.audit.domain.AuditEventService;
 import jakarta.validation.Valid;
@@ -20,7 +21,6 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuditEventController {
 
   private static final int DEFAULT_LIMIT = 50;
-  private static final int DEFAULT_OFFSET = 0;
 
   private final AuditEventService service;
 
@@ -48,11 +48,18 @@ public class AuditEventController {
       @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
       @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
       @RequestParam(required = false) Integer limit,
-      @RequestParam(required = false) Integer offset) {
+      @RequestParam(required = false) String cursor) {
     int effectiveLimit = limit == null ? DEFAULT_LIMIT : limit;
-    int effectiveOffset = offset == null ? DEFAULT_OFFSET : offset;
     var criteria =
-        new AuditEventSearchCriteria(actor, resource, from, to, effectiveLimit, effectiveOffset);
+        new AuditEventSearchCriteria(
+            actor, resource, from, to, effectiveLimit, parseCursor(cursor));
     return AuditEventSearchResponse.of(service.search(criteria));
+  }
+
+  private static AuditEventCursor parseCursor(String cursor) {
+    if (cursor == null) {
+      return null;
+    }
+    return AuditEventCursor.decode(cursor);
   }
 }

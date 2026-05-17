@@ -65,9 +65,9 @@ class AuditEventControllerIntegrationTest {
         .andExpect(jsonPath("$.items[0].sequenceNo").doesNotExist())
         .andExpect(jsonPath("$.items[0].timestamp").doesNotExist())
         .andExpect(jsonPath("$.page.limit").value(50))
-        .andExpect(jsonPath("$.page.offset").value(0))
+        .andExpect(jsonPath("$.page.cursor").value(org.hamcrest.Matchers.nullValue()))
         .andExpect(jsonPath("$.page.hasMore").value(false))
-        .andExpect(jsonPath("$.page.nextOffset").value(org.hamcrest.Matchers.nullValue()));
+        .andExpect(jsonPath("$.page.nextCursor").value(org.hamcrest.Matchers.nullValue()));
   }
 
   @Test

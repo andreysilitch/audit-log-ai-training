@@ -3,6 +3,7 @@ package com.example.audit;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.example.audit.domain.AuditEvent;
+import com.example.audit.domain.AuditEventCursor;
 import com.example.audit.domain.AuditEventRepository;
 import com.example.audit.domain.AuditEventSearchCriteria;
 import com.example.audit.domain.AuditOutcome;
@@ -31,7 +32,7 @@ class PostgresAuditEventRepositoryIntegrationTest {
   @Autowired ObjectMapper objectMapper;
 
   @Test
-  void paginatesResultsByLimitAndOffset() {
+  void paginatesResultsByLimitAndCursor() {
     String actor = "pager-" + UUID.randomUUID();
     Instant base = Instant.now().truncatedTo(ChronoUnit.MICROS);
     for (int i = 0; i < 5; i++) {
@@ -46,21 +47,28 @@ class PostgresAuditEventRepositoryIntegrationTest {
     }
     // Repository fetches limit + 1 so the service can detect hasMore.
     var criteria =
-        new AuditEventSearchCriteria(actor, null, base.minusSeconds(1), base.plusSeconds(60), 2, 0);
+        new AuditEventSearchCriteria(
+            actor, null, base.minusSeconds(1), base.plusSeconds(60), 2, null);
 
     List<AuditEvent> page1 = repository.search(criteria);
+    AuditEventCursor secondPageCursor = AuditEventCursor.of(page1.get(1));
     List<AuditEvent> page2 =
         repository.search(
             new AuditEventSearchCriteria(
-                actor, null, base.minusSeconds(1), base.plusSeconds(60), 2, 2));
+                actor, null, base.minusSeconds(1), base.plusSeconds(60), 2, secondPageCursor));
+    AuditEventCursor thirdPageCursor = AuditEventCursor.of(page2.get(1));
     List<AuditEvent> page3 =
         repository.search(
             new AuditEventSearchCriteria(
-                actor, null, base.minusSeconds(1), base.plusSeconds(60), 2, 4));
+                actor, null, base.minusSeconds(1), base.plusSeconds(60), 2, thirdPageCursor));
 
     assertThat(page1).hasSize(3);
     assertThat(page2).hasSize(3);
     assertThat(page3).hasSize(1);
+    assertThat(page2.stream().map(AuditEvent::id).toList())
+        .doesNotContain(page1.get(0).id(), page1.get(1).id());
+    assertThat(page3.stream().map(AuditEvent::id).toList())
+        .doesNotContain(page2.get(0).id(), page2.get(1).id());
 
     // DESC ordering by timestamp.
     assertThat(page1.get(0).timestamp()).isAfterOrEqualTo(page1.get(1).timestamp());
@@ -83,7 +91,7 @@ class PostgresAuditEventRepositoryIntegrationTest {
 
     var criteria =
         new AuditEventSearchCriteria(
-            actor, null, sameInstant.minusSeconds(1), sameInstant.plusSeconds(1), 10, 0);
+            actor, null, sameInstant.minusSeconds(1), sameInstant.plusSeconds(1), 10, null);
 
     List<AuditEvent> first = repository.search(criteria);
     List<AuditEvent> second = repository.search(criteria);
@@ -116,7 +124,7 @@ class PostgresAuditEventRepositoryIntegrationTest {
     List<AuditEvent> rows =
         repository.search(
             new AuditEventSearchCriteria(
-                actor, null, base.minusSeconds(1), base.plusSeconds(60), 5, 0));
+                actor, null, base.minusSeconds(1), base.plusSeconds(60), 5, null));
 
     assertThat(rows).hasSize(6);
   }
@@ -148,7 +156,7 @@ class PostgresAuditEventRepositoryIntegrationTest {
     // [t0, t0+20) — must include t0 and t0+10 but exclude t0+20
     List<AuditEvent> result =
         repository.search(
-            new AuditEventSearchCriteria(actor, null, t0, t0.plusSeconds(20), 100, 0));
+            new AuditEventSearchCriteria(actor, null, t0, t0.plusSeconds(20), 100, null));
 
     assertThat(result).hasSize(2);
     assertThat(result).allMatch(e -> e.timestamp().isBefore(t0.plusSeconds(20)));
@@ -181,7 +189,7 @@ class PostgresAuditEventRepositoryIntegrationTest {
     List<AuditEvent> result =
         repository.search(
             new AuditEventSearchCriteria(
-                actor, "project:1", t0.minusSeconds(1), t0.plusSeconds(60), 100, 0));
+                actor, "project:1", t0.minusSeconds(1), t0.plusSeconds(60), 100, null));
 
     assertThat(result).hasSize(2).allMatch(e -> e.resource().equals("project:1"));
   }

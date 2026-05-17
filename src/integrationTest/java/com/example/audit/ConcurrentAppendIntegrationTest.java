@@ -81,7 +81,7 @@ class ConcurrentAppendIntegrationTest {
 
     Instant to = Instant.now().plusSeconds(5);
     List<AuditEvent> mine =
-        repository.search(new AuditEventSearchCriteria(actor, null, from, to, 1000, 0));
+        repository.search(new AuditEventSearchCriteria(actor, null, from, to, 200, null));
     assertThat(mine).hasSize(total);
 
     // Verify chain in global ascending sequence_no order — appends serialize via advisory lock,

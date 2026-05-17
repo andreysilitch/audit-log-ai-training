@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
@@ -106,9 +107,18 @@ public class PostgresAuditEventRepository implements AuditEventRepository {
     args.add(Timestamp.from(c.from()));
     args.add(Timestamp.from(c.to()));
 
-    if (c.actor() != null && !c.actor().isBlank()) {
-      sql.append(" AND actor = ?");
-      args.add(c.actor());
+    List<String> actors = c.parsedActors().stream().distinct().toList();
+    if (!actors.isEmpty()) {
+      if (actors.size() == 1) {
+        sql.append(" AND actor = ?");
+        args.add(actors.get(0));
+      } else {
+        sql.append(
+            " AND actor IN ("
+                + actors.stream().map(actor -> "?").collect(Collectors.joining(", "))
+                + ")");
+        args.addAll(actors);
+      }
     }
     if (c.resource() != null && !c.resource().isBlank()) {
       sql.append(" AND resource = ?");

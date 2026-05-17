@@ -195,6 +195,142 @@ class PostgresAuditEventRepositoryIntegrationTest {
   }
 
   @Test
+  void filtersByMultipleActors() {
+    String actor1 = "multi-a-" + UUID.randomUUID();
+    String actor2 = "multi-b-" + UUID.randomUUID();
+    String actor3 = "multi-c-" + UUID.randomUUID();
+    Instant t0 = Instant.now().truncatedTo(ChronoUnit.MICROS);
+
+    repository.append(
+        new NewAuditEvent(
+            t0, actor1, "a", "project:1", AuditOutcome.SUCCESS, objectMapper.createObjectNode()));
+    repository.append(
+        new NewAuditEvent(
+            t0.plusSeconds(1),
+            actor2,
+            "a",
+            "project:2",
+            AuditOutcome.SUCCESS,
+            objectMapper.createObjectNode()));
+    repository.append(
+        new NewAuditEvent(
+            t0.plusSeconds(2),
+            actor3,
+            "a",
+            "project:3",
+            AuditOutcome.SUCCESS,
+            objectMapper.createObjectNode()));
+
+    List<AuditEvent> result =
+        repository.search(
+            new AuditEventSearchCriteria(
+                actor1 + "," + actor3, null, t0.minusSeconds(1), t0.plusSeconds(60), 100, null));
+
+    assertThat(result).hasSize(2);
+    assertThat(result.stream().map(AuditEvent::actor).toList()).containsExactly(actor3, actor1);
+  }
+
+  @Test
+  void combinesMultiActorAndResourceWithAndSemantics() {
+    String actor1 = "and-a-" + UUID.randomUUID();
+    String actor2 = "and-b-" + UUID.randomUUID();
+    String otherActor = "and-c-" + UUID.randomUUID();
+    String resource = "project:" + UUID.randomUUID();
+    Instant t0 = Instant.now().truncatedTo(ChronoUnit.MICROS);
+
+    repository.append(
+        new NewAuditEvent(
+            t0, actor1, "a", resource, AuditOutcome.SUCCESS, objectMapper.createObjectNode()));
+    repository.append(
+        new NewAuditEvent(
+            t0.plusSeconds(1),
+            actor2,
+            "a",
+            resource,
+            AuditOutcome.SUCCESS,
+            objectMapper.createObjectNode()));
+    repository.append(
+        new NewAuditEvent(
+            t0.plusSeconds(2),
+            actor1,
+            "a",
+            "project:other",
+            AuditOutcome.SUCCESS,
+            objectMapper.createObjectNode()));
+    repository.append(
+        new NewAuditEvent(
+            t0.plusSeconds(3),
+            otherActor,
+            "a",
+            resource,
+            AuditOutcome.SUCCESS,
+            objectMapper.createObjectNode()));
+
+    List<AuditEvent> result =
+        repository.search(
+            new AuditEventSearchCriteria(
+                actor1 + "," + actor2,
+                resource,
+                t0.minusSeconds(1),
+                t0.plusSeconds(60),
+                100,
+                null));
+
+    assertThat(result).hasSize(2);
+    assertThat(result).allMatch(event -> event.resource().equals(resource));
+    assertThat(result.stream().map(AuditEvent::actor).toList()).containsExactly(actor2, actor1);
+  }
+
+  @Test
+  void paginatesMultipleActorsWithoutDuplicates() {
+    String actor1 = "page-a-" + UUID.randomUUID();
+    String actor2 = "page-b-" + UUID.randomUUID();
+    Instant base = Instant.now().truncatedTo(ChronoUnit.MICROS);
+    for (int i = 0; i < 3; i++) {
+      repository.append(
+          new NewAuditEvent(
+              base.plusSeconds(i),
+              actor1,
+              "act",
+              "res:a:" + i,
+              AuditOutcome.SUCCESS,
+              objectMapper.createObjectNode()));
+      repository.append(
+          new NewAuditEvent(
+              base.plusSeconds(i + 3),
+              actor2,
+              "act",
+              "res:b:" + i,
+              AuditOutcome.SUCCESS,
+              objectMapper.createObjectNode()));
+    }
+
+    String actorFilter = actor1 + "," + actor2;
+    List<AuditEvent> page1 =
+        repository.search(
+            new AuditEventSearchCriteria(
+                actorFilter, null, base.minusSeconds(1), base.plusSeconds(60), 2, null));
+    AuditEventCursor page2Cursor = AuditEventCursor.of(page1.get(1));
+    List<AuditEvent> page2 =
+        repository.search(
+            new AuditEventSearchCriteria(
+                actorFilter, null, base.minusSeconds(1), base.plusSeconds(60), 2, page2Cursor));
+    AuditEventCursor page3Cursor = AuditEventCursor.of(page2.get(1));
+    List<AuditEvent> page3 =
+        repository.search(
+            new AuditEventSearchCriteria(
+                actorFilter, null, base.minusSeconds(1), base.plusSeconds(60), 2, page3Cursor));
+
+    assertThat(page1).hasSize(3);
+    assertThat(page2).hasSize(3);
+    assertThat(page3).hasSize(2);
+    assertThat(page2.stream().map(AuditEvent::id).toList())
+        .doesNotContain(page1.get(0).id(), page1.get(1).id());
+    assertThat(page3.stream().map(AuditEvent::id).toList())
+        .doesNotContain(page2.get(0).id(), page2.get(1).id());
+  }
+
+  @Test
   void latestReturnsHighestSequenceNo() {
     Instant t0 = Instant.now().truncatedTo(ChronoUnit.MICROS);
     AuditEvent first =

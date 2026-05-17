@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -74,6 +75,40 @@ class AuditEventServiceTest {
     assertThatThrownBy(() -> service.search(criteria(" ", "order/9", T0, T1, 50, null)))
         .isInstanceOf(QueryValidationException.class)
         .hasMessageContaining("actor must not be blank");
+  }
+
+  @Test
+  void parsesCommaSeparatedActors() {
+    AuditEventSearchCriteria c = criteria(" alice , bob,svc-auth ", null, T0, T1, 50, null);
+
+    assertThat(c.parsedActors()).containsExactly("alice", "bob", "svc-auth");
+  }
+
+  @Test
+  void rejectsActorListWithBlankItem() {
+    assertThatThrownBy(() -> service.search(criteria("alice,,bob", null, T0, T1, 50, null)))
+        .isInstanceOf(QueryValidationException.class)
+        .hasMessageContaining("non-blank values");
+  }
+
+  @Test
+  void rejectsActorListWithWhitespaceOnlyItem() {
+    assertThatThrownBy(() -> service.search(criteria("alice,  ,bob", null, T0, T1, 50, null)))
+        .isInstanceOf(QueryValidationException.class)
+        .hasMessageContaining("non-blank values");
+  }
+
+  @Test
+  void rejectsActorListAboveMax() {
+    List<String> actors = new ArrayList<>();
+    for (int i = 0; i < 11; i++) {
+      actors.add("actor-" + i);
+    }
+
+    assertThatThrownBy(
+            () -> service.search(criteria(String.join(",", actors), null, T0, T1, 50, null)))
+        .isInstanceOf(QueryValidationException.class)
+        .hasMessageContaining("at most 10 values");
   }
 
   @Test

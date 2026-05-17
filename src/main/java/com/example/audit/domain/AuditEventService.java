@@ -51,6 +51,13 @@ public class AuditEventService {
     if (criteria.actor() != null && criteria.actor().isBlank()) {
       throw new QueryValidationException("actor must not be blank");
     }
+    List<String> parsedActors = criteria.parsedActors();
+    if (parsedActors.stream().anyMatch(String::isBlank)) {
+      throw new QueryValidationException("actor must contain only non-blank values");
+    }
+    if (parsedActors.size() > 10) {
+      throw new QueryValidationException("actor supports at most 10 values");
+    }
     if (criteria.resource() != null && criteria.resource().isBlank()) {
       throw new QueryValidationException("resource must not be blank");
     }

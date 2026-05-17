@@ -69,3 +69,6 @@ desktop.ini
 jacoco.exec
 *.exec
 coverage/
+
+# Local hook state
+.codex-hooks-state/

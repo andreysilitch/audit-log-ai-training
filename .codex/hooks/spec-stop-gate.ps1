@@ -97,16 +97,89 @@ function Get-SpecState {
     return $state
 }
 
+function Get-StringValuesRecursive {
+    param($Value)
+
+    $values = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $Value) {
+        return @()
+    }
+
+    if ($Value -is [string]) {
+        $values.Add($Value)
+        return @($values)
+    }
+
+    if ($Value -is [System.Collections.IDictionary]) {
+        foreach ($key in $Value.Keys) {
+            foreach ($item in (Get-StringValuesRecursive -Value $Value[$key])) {
+                $values.Add($item)
+            }
+        }
+        return @($values)
+    }
+
+    if ($Value.PSObject -and $Value.PSObject.Properties.Count -gt 0) {
+        foreach ($property in $Value.PSObject.Properties) {
+            foreach ($item in (Get-StringValuesRecursive -Value $property.Value)) {
+                $values.Add($item)
+            }
+        }
+        return @($values)
+    }
+
+    if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [string])) {
+        foreach ($entry in $Value) {
+            foreach ($item in (Get-StringValuesRecursive -Value $entry)) {
+                $values.Add($item)
+            }
+        }
+    }
+
+    return @($values)
+}
+
+function Get-ReferencedSpecFeatures {
+    param(
+        [string]$RepoRoot,
+        $InputObject
+    )
+
+    $features = New-Object System.Collections.Generic.HashSet[string]
+    $strings = Get-StringValuesRecursive -Value $InputObject
+
+    foreach ($text in $strings) {
+        foreach ($match in [regex]::Matches($text, '(?i)\.specs[\\/]+([^\\/\s"''`)\]>]+)')) {
+            $feature = $match.Groups[1].Value
+            if ([string]::IsNullOrWhiteSpace($feature)) {
+                continue
+            }
+            if ($feature.StartsWith("_")) {
+                continue
+            }
+
+            $featureDir = Join-Path $RepoRoot (".specs/{0}" -f $feature)
+            if (Test-Path $featureDir) {
+                $null = $features.Add($feature)
+            }
+        }
+    }
+
+    return @($features | Sort-Object)
+}
+
 function Save-Snapshot {
     param(
         [string]$RepoRoot,
-        [string]$SessionKey
+        [string]$SessionKey,
+        $InputObject
     )
 
     $payload = @{
         repoRoot = $RepoRoot
         capturedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
         files = Get-SpecState -RepoRoot $RepoRoot
+        referencedFeatures = @(Get-ReferencedSpecFeatures -RepoRoot $RepoRoot -InputObject $InputObject)
     }
 
     $json = $payload | ConvertTo-Json -Depth 6
@@ -169,6 +242,28 @@ function Get-TouchedFeatures {
     }
 
     return @($features | Sort-Object)
+}
+
+function Get-ReferencedFeaturesFromSnapshot {
+    param($Snapshot)
+
+    if (-not $Snapshot) {
+        return @()
+    }
+
+    $values = @()
+    $property = $Snapshot.PSObject.Properties["referencedFeatures"]
+    if (-not $property -or $null -eq $property.Value) {
+        return @()
+    }
+
+    foreach ($feature in $property.Value) {
+        if ($null -ne $feature -and "$feature" -ne "") {
+            $values += "$feature"
+        }
+    }
+
+    return @($values | Sort-Object -Unique)
 }
 
 function Get-MarkdownHeadings {
@@ -691,7 +786,7 @@ $sessionKey = Get-InputValue -InputObject $inputData -Names @("session_id", "ses
 $repoRoot = Get-RepoRoot
 
 if ($eventName -eq "UserPromptSubmit") {
-    Save-Snapshot -RepoRoot $repoRoot -SessionKey $sessionKey
+    Save-Snapshot -RepoRoot $repoRoot -SessionKey $sessionKey -InputObject $inputData
     exit 0
 }
 
@@ -705,13 +800,15 @@ if (-not $snapshot) {
 }
 
 $touchedFeatures = Get-TouchedFeatures -RepoRoot $repoRoot -Snapshot $snapshot
-if ($touchedFeatures.Count -eq 0) {
+$referencedFeatures = Get-ReferencedFeaturesFromSnapshot -Snapshot $snapshot
+$targetFeatures = @($touchedFeatures + $referencedFeatures | Sort-Object -Unique)
+if ($targetFeatures.Count -eq 0) {
     Remove-Snapshot -SessionKey $sessionKey
     exit 0
 }
 
 $results = @()
-foreach ($feature in $touchedFeatures) {
+foreach ($feature in $targetFeatures) {
     try {
         $results += Invoke-SpecSelfEval -RepoRoot $repoRoot -Feature $feature
     } catch {
@@ -730,12 +827,8 @@ foreach ($result in $results) {
 
 if ($blocking.Count -gt 0) {
     $prompt = @(
-        "Spec self-eval failed for the feature specs you changed. Fix the blocking items before ending the turn.",
-        "",
-        "Blocking items:",
-        ($blocking -join "`n"),
-        "",
-        "After fixing the spec files under `.specs/<feature>/`, try ending the turn again."
+        "Spec has FAIL items:",
+        ($blocking -join "`n")
     ) -join "`n"
 
     [Console]::Error.WriteLine($prompt)

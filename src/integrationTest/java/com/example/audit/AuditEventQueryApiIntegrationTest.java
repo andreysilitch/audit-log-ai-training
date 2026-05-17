@@ -397,8 +397,7 @@ class AuditEventQueryApiIntegrationTest {
   void actorListAboveMaxReturns422() throws Exception {
     String actors =
         String.join(
-            ",",
-            java.util.stream.IntStream.range(0, 11).mapToObj(i -> "actor-" + i).toList());
+            ",", java.util.stream.IntStream.range(0, 11).mapToObj(i -> "actor-" + i).toList());
 
     mvc.perform(
             get("/audit-events")
@@ -408,8 +407,7 @@ class AuditEventQueryApiIntegrationTest {
         .andExpect(status().isUnprocessableEntity())
         .andExpect(jsonPath("$.error").value("validation_failed"))
         .andExpect(
-            jsonPath("$.message")
-                .value(org.hamcrest.Matchers.containsString("at most 10 values")));
+            jsonPath("$.message").value(org.hamcrest.Matchers.containsString("at most 10 values")));
   }
 
   @Test

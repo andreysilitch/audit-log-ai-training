@@ -79,6 +79,27 @@ class AuditEventQueryApiIntegrationTest {
   }
 
   @Test
+  void searchesByMultipleActorsAndTimeRange() throws Exception {
+    String actor1 = "multi-a-" + UUID.randomUUID();
+    String actor2 = "multi-b-" + UUID.randomUUID();
+    String actor3 = "multi-c-" + UUID.randomUUID();
+    Instant base = Instant.parse("2026-06-01T12:00:00Z");
+    seed(actor1, "r1", AuditOutcome.SUCCESS, base);
+    seed(actor2, "r1", AuditOutcome.SUCCESS, base.plusSeconds(1));
+    seed(actor3, "r1", AuditOutcome.SUCCESS, base.plusSeconds(2));
+
+    mvc.perform(
+            get("/audit-events")
+                .param("actor", actor1 + "," + actor3)
+                .param("from", windowFrom())
+                .param("to", windowTo()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.items.length()").value(2))
+        .andExpect(jsonPath("$.items[0].actor").value(actor3))
+        .andExpect(jsonPath("$.items[1].actor").value(actor1));
+  }
+
+  @Test
   void searchesByResourceAndTimeRange() throws Exception {
     String actor = "ann-" + UUID.randomUUID();
     String resource = "order/" + UUID.randomUUID();
@@ -121,6 +142,33 @@ class AuditEventQueryApiIntegrationTest {
         .andExpect(jsonPath("$.items.length()").value(1))
         .andExpect(jsonPath("$.items[0].actor").value(actor))
         .andExpect(jsonPath("$.items[0].resource").value(resource));
+  }
+
+  @Test
+  void combinesMultipleActorsAndResource() throws Exception {
+    String actor1 = "carol-a-" + UUID.randomUUID();
+    String actor2 = "carol-b-" + UUID.randomUUID();
+    String otherActor = "carol-c-" + UUID.randomUUID();
+    String resource = "doc/" + UUID.randomUUID();
+    String otherResource = "doc/" + UUID.randomUUID();
+    Instant base = Instant.parse("2026-06-03T12:00:00Z");
+    seed(actor1, resource, AuditOutcome.SUCCESS, base);
+    seed(actor2, resource, AuditOutcome.SUCCESS, base.plusSeconds(1));
+    seed(actor1, otherResource, AuditOutcome.SUCCESS, base.plusSeconds(2));
+    seed(otherActor, resource, AuditOutcome.SUCCESS, base.plusSeconds(3));
+
+    mvc.perform(
+            get("/audit-events")
+                .param("actor", actor1 + "," + actor2)
+                .param("resource", resource)
+                .param("from", windowFrom())
+                .param("to", windowTo()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.items.length()").value(2))
+        .andExpect(jsonPath("$.items[0].actor").value(actor2))
+        .andExpect(jsonPath("$.items[0].resource").value(resource))
+        .andExpect(jsonPath("$.items[1].actor").value(actor1))
+        .andExpect(jsonPath("$.items[1].resource").value(resource));
   }
 
   @Test
@@ -170,6 +218,51 @@ class AuditEventQueryApiIntegrationTest {
     }
 
     assertThat(seenIds).hasSize(7);
+  }
+
+  @Test
+  void paginatesAcrossPagesForMultipleActors() throws Exception {
+    String actor1 = "page-a-" + UUID.randomUUID();
+    String actor2 = "page-b-" + UUID.randomUUID();
+    Instant base = Instant.parse("2026-06-04T12:00:00Z");
+    for (int i = 0; i < 4; i++) {
+      seed(actor1, "r-a-" + i, AuditOutcome.SUCCESS, base.plusSeconds(i));
+      seed(actor2, "r-b-" + i, AuditOutcome.SUCCESS, base.plusSeconds(i + 4));
+    }
+
+    java.util.Set<String> seenIds = new java.util.LinkedHashSet<>();
+    String cursor = null;
+    boolean hasMore = true;
+    int loops = 0;
+    String actorFilter = actor1 + "," + actor2;
+    while (hasMore) {
+      var request =
+          get("/audit-events")
+              .param("actor", actorFilter)
+              .param("from", windowFrom())
+              .param("to", windowTo())
+              .param("limit", "3");
+      if (cursor != null) {
+        request = request.param("cursor", cursor);
+      }
+      MvcResult result = mvc.perform(request).andExpect(status().isOk()).andReturn();
+      JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
+      for (JsonNode item : body.get("items")) {
+        boolean fresh = seenIds.add(item.get("id").asText());
+        assertThat(fresh).as("no duplicate id across multi-actor pages").isTrue();
+      }
+      hasMore = body.get("page").get("hasMore").asBoolean();
+      JsonNode next = body.get("page").get("nextCursor");
+      if (hasMore) {
+        assertThat(next.isNull()).isFalse();
+        cursor = next.asText();
+      } else {
+        assertThat(next.isNull()).isTrue();
+      }
+      assertThat(++loops).isLessThan(10);
+    }
+
+    assertThat(seenIds).hasSize(8);
   }
 
   @Test
@@ -298,6 +391,25 @@ class AuditEventQueryApiIntegrationTest {
                 .param("cursor", "not-a-valid-cursor"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error").value("cursor has invalid format"));
+  }
+
+  @Test
+  void actorListAboveMaxReturns422() throws Exception {
+    String actors =
+        String.join(
+            ",",
+            java.util.stream.IntStream.range(0, 11).mapToObj(i -> "actor-" + i).toList());
+
+    mvc.perform(
+            get("/audit-events")
+                .param("actor", actors)
+                .param("from", windowFrom())
+                .param("to", windowTo()))
+        .andExpect(status().isUnprocessableEntity())
+        .andExpect(jsonPath("$.error").value("validation_failed"))
+        .andExpect(
+            jsonPath("$.message")
+                .value(org.hamcrest.Matchers.containsString("at most 10 values")));
   }
 
   @Test

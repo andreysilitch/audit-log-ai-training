@@ -9,6 +9,7 @@ Add composite B-tree indexes optimized for the query API's filtering and sorting
 - [design.md#Indexes](design.md#indexes)
 - [design.md#Migration Plan](design.md#migration-plan)
 - [requirements.md#US1.AC5](requirements.md#us1ac5)
+- [requirements.md#US1.AC2a](requirements.md#us1ac2a)
 
 ### DoD
 
@@ -17,6 +18,7 @@ Add composite B-tree indexes optimized for the query API's filtering and sorting
 - [ ] Index `idx_audit_events_resource_timestamp_id` created on `(resource, timestamp DESC, id DESC)`.
 - [ ] Migration applies successfully on a fresh database via `./gradlew flywayMigrate` or application startup.
 - [ ] Existing `V1__create_audit_events.sql` is not modified.
+- [ ] Multi-actor filtering reuses the existing `idx_audit_events_actor_timestamp_id` access path, and no additional actor index is introduced unless a later design revision changes that decision.
 
 ### Dependencies
 
@@ -32,7 +34,9 @@ Enforce query invariants in the domain/service layer so validation is not couple
 
 - [design.md#Validation Rules](design.md#validation-rules)
 - [requirements.md#US1.AC6](requirements.md#us1ac6)
+- [requirements.md#US1.AC2a](requirements.md#us1ac2a)
 - [requirements.md#US3.AC6](requirements.md#us3ac6)
+- [requirements.md#US3.AC6a](requirements.md#us3ac6a)
 
 ### DoD
 
@@ -40,6 +44,8 @@ Enforce query invariants in the domain/service layer so validation is not couple
 - [ ] `AuditEventService.search()` throws a domain exception when `from >= to`.
 - [ ] `AuditEventService.search()` throws a domain exception when both `actor` and `resource` are absent or blank.
 - [ ] `AuditEventService.search()` throws a domain exception when `actor` is provided but blank.
+- [ ] `AuditEventService.search()` parses `actor` as either a single value or a comma-separated list of values.
+- [ ] `AuditEventService.search()` throws a domain exception when the parsed `actor` list contains more than 10 values.
 - [ ] `AuditEventService.search()` throws a domain exception when `resource` is provided but blank.
 - [ ] `AuditEventService.search()` throws a domain exception when `limit` is outside `[1, 200]`.
 - [ ] `AuditEventService.search()` throws a domain exception when `cursor` is syntactically valid at the transport layer but semantically invalid for the contract.
@@ -86,14 +92,18 @@ Update repository to fetch `limit + 1` rows, apply keyset pagination, and suppor
 - [requirements.md#US3.AC1](requirements.md#us3ac1)
 - [requirements.md#US3.AC2](requirements.md#us3ac2)
 - [requirements.md#US3.AC5](requirements.md#us3ac5)
+- [requirements.md#US3.AC5a](requirements.md#us3ac5a)
+- [requirements.md#US1.AC2a](requirements.md#us1ac2a)
 
 ### DoD
 
 - [ ] `PostgresAuditEventRepository.search()` orders results by `timestamp DESC, id DESC`.
+- [ ] `PostgresAuditEventRepository.search()` translates a multi-actor filter into an `actor IN (...)` predicate over the parsed actor list.
 - [ ] Repository applies a cursor predicate based on `timestamp` and `id` when a cursor is present.
 - [ ] Repository fetches `limit + 1` rows to detect whether more results exist.
 - [ ] Repository returns a structure or uses a convention that allows the service to determine `hasMore`.
 - [ ] Existing ordering by `sequence_no` is replaced with `id` for tie-breaking.
+- [ ] Multi-actor queries preserve the same deterministic ordering and cursor-boundary behavior as single-actor queries.
 - [ ] Integration test confirms deterministic order when multiple events share the same timestamp.
 
 ### Dependencies
@@ -166,25 +176,32 @@ Add Testcontainers-based integration tests covering query scenarios from design.
 
 - [design.md#Integration Testing Expectations](design.md#integration-testing-expectations)
 - [requirements.md#US1.AC2](requirements.md#us1ac2)
+- [requirements.md#US1.AC2a](requirements.md#us1ac2a)
 - [requirements.md#US1.AC3](requirements.md#us1ac3)
 - [requirements.md#US2.AC1](requirements.md#us2ac1)
 - [requirements.md#US2.AC2](requirements.md#us2ac2)
 - [requirements.md#US2.AC3](requirements.md#us2ac3)
 - [requirements.md#US3.AC1](requirements.md#us3ac1)
 - [requirements.md#US3.AC2](requirements.md#us3ac2)
+- [requirements.md#US3.AC5a](requirements.md#us3ac5a)
+- [requirements.md#US3.AC6a](requirements.md#us3ac6a)
 
 ### DoD
 
 - [ ] Test: `actor + time range` search returns matching events.
+- [ ] Test: multi-actor `actor + time range` search returns events for any actor in the provided comma-separated list.
 - [ ] Test: `resource + time range` search returns matching events.
 - [ ] Test: `actor + resource + time range` combined filter works.
+- [ ] Test: multi-actor `actor + resource + time range` combined filter works with AND semantics against `resource`.
 - [ ] Test: Cursor-based pagination across multiple pages for a fixed query window returns all events without loss or duplication.
+- [ ] Test: Multi-actor cursor-based pagination across multiple pages for a fixed query window returns all matching events without loss or duplication.
 - [ ] Test: Deterministic ordering verified when multiple events share the same timestamp.
 - [ ] Test: Empty result returns `200 OK` with `"items": []`.
 - [ ] Test: Missing both `actor` and `resource` returns `422`.
 - [ ] Test: `from >= to` returns `422`.
 - [ ] Test: Malformed timestamp returns `400`.
 - [ ] Test: Malformed cursor returns `400`.
+- [ ] Test: More than 10 actor values in the comma-separated `actor` filter returns `422`.
 - [ ] Test: `limit` outside `[1, 200]` returns `422`.
 - [ ] All tests use Testcontainers with PostgreSQL.
 

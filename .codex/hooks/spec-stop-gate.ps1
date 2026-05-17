@@ -801,7 +801,7 @@ if (-not $snapshot) {
 
 $touchedFeatures = Get-TouchedFeatures -RepoRoot $repoRoot -Snapshot $snapshot
 $referencedFeatures = Get-ReferencedFeaturesFromSnapshot -Snapshot $snapshot
-$targetFeatures = @($touchedFeatures + $referencedFeatures | Sort-Object -Unique)
+$targetFeatures = @((@($touchedFeatures) + @($referencedFeatures)) | Sort-Object -Unique)
 if ($targetFeatures.Count -eq 0) {
     Remove-Snapshot -SessionKey $sessionKey
     exit 0
@@ -813,6 +813,7 @@ foreach ($feature in $targetFeatures) {
         $results += Invoke-SpecSelfEval -RepoRoot $repoRoot -Feature $feature
     } catch {
         $message = ('spec-self-eval hook failed for `.specs/{0}`: {1}' -f $feature, $_.Exception.Message)
+        [Console]::Out.WriteLine($message)
         [Console]::Error.WriteLine($message)
         exit 2
     }
@@ -841,6 +842,7 @@ if ($blocking.Count -gt 0) {
         ($blocking -join "`n")
     ) -join "`n"
 
+    [Console]::Out.WriteLine($prompt)
     [Console]::Error.WriteLine($prompt)
     exit 2
 }

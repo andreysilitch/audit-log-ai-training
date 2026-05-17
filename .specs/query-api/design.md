@@ -16,7 +16,7 @@ The query API exposes only `GET /audit-events` for this feature. No write capabi
 | --- | --- | --- | --- |
 | `from` | yes | ISO-8601 UTC timestamp | Inclusive lower bound of the search window. |
 | `to` | yes | ISO-8601 UTC timestamp | Exclusive upper bound of the search window. |
-| `actor` | conditional | string | Optional by itself, but at least one of `actor` or `resource` must be provided. |
+| `actor` | conditional | string | Optional by itself, but at least one of `actor` or `resource` must be provided. Accepts one actor value or a comma-separated list of up to 10 actor values. |
 | `resource` | conditional | string | Optional by itself, but at least one of `actor` or `resource` must be provided. |
 | `cursor` | no | string | Opaque continuation token for keyset pagination. Omit for the first page. |
 | `limit` | no | integer | Page size. Default `50`, maximum `200`. |
@@ -24,6 +24,13 @@ The query API exposes only `GET /audit-events` for this feature. No write capabi
 ### Actor Filtering
 
 The API accepts `actor` as an optional filter parameter and applies it exactly as part of the search criteria.
+
+### Single-Actor and Multi-Actor Filter Semantics
+
+- A request may supply one actor value, for example `actor=u_42`, or a comma-separated list, for example `actor=u_42,svc_billing,svc_auth`.
+- The parsed actor list uses OR semantics inside the actor filter, equivalent to `actor IN (...)`.
+- The actor filter still combines with `resource`, `from`, and `to` using AND semantics.
+- The request may contain at most 10 actor values.
 
 ### Resource Filtering
 
@@ -109,7 +116,7 @@ When no events match the query, the API returns `200 OK` with `"items": []` and 
 | `400 Bad Request` | The request cannot be parsed, for example malformed timestamp format, malformed cursor, or a non-numeric `limit` value. |
 | `401 Unauthorized` | The caller is not authenticated. |
 | `403 Forbidden` | The caller is authenticated but does not have permission to read audit events. |
-| `422 Unprocessable Entity` | The request is syntactically valid but violates query rules, for example missing both `actor` and `resource`, `from >= to`, blank filter values, or `limit` outside the allowed range. |
+| `422 Unprocessable Entity` | The request is syntactically valid but violates query rules, for example missing both `actor` and `resource`, `from >= to`, blank filter values, an `actor` list with more than 10 values, or `limit` outside the allowed range. |
 | `500 Internal Server Error` | Unexpected server-side error. The body must stay safe and not leak SQL, schema, or stack traces. |
 
 ### Error Body
@@ -186,6 +193,8 @@ The pagination contract is expressed only through `cursor` and `limit`; the API 
 
 Clients must keep `actor`, `resource`, `from`, `to`, and `limit` fixed while following returned cursor values so the traversal remains within one deterministic query scope.
 
+For a multi-actor request, the full parsed actor list is part of that fixed query scope. Cursor traversal is valid only when the same actor set, resource filter, time bounds, and limit are reused across page requests.
+
 For descending order, the repository query is:
 
 ```sql
@@ -258,11 +267,22 @@ CREATE INDEX idx_audit_events_resource_timestamp_id
 
 ### Query Patterns Covered
 
+- `multi-actor + time range`
 - `actor + time range`
 - `resource + time range`
+- `multi-actor + resource + time range`
 - `actor + resource + time range`
 
 For combined `actor + resource` queries, PostgreSQL can use the more selective index and apply the other predicate as a filter. If production measurements later show a consistent bottleneck for combined lookups, a dedicated composite index can be introduced in a later migration.
+
+### Multi-Actor Index Strategy
+
+The existing `idx_audit_events_actor_timestamp_id` index is sufficient for the multi-actor filter introduced in the requirements.
+
+- The actor list is capped at 10 values, which bounds the number of actor-specific index probes in one query.
+- PostgreSQL can satisfy `actor IN (...)` by combining index access paths for the existing `(actor, timestamp DESC, id DESC)` index and still preserve efficient filtering on the bounded time window.
+- Because the canonical sort order is already covered by that index, the multi-actor feature does not require a new composite index in this version.
+- A new index is therefore not introduced unless production query plans show that the bounded IN-list pattern regresses materially.
 
 ### Migration Plan
 
@@ -283,6 +303,8 @@ The controller must validate HTTP syntax, but the domain service must also enfor
 - `from` must be strictly earlier than `to`.
 - At least one of `actor` or `resource` must be present.
 - If provided, `actor` must not be blank.
+- If provided, `actor` may contain one actor value or a comma-separated list of actor values.
+- The parsed actor list must contain at most 10 actor values.
 - If provided, `resource` must not be blank.
 - `limit` must be between `1` and `200`.
 - `cursor`, if provided, must be a non-blank, decodable continuation token with both `occurredAt` and `id`.
@@ -297,9 +319,10 @@ Semantic validation in the domain service runs in this fixed order so the first 
 
 1. time range presence and ordering (`from`/`to` non-null, `from < to`);
 2. filter mutex (at least one of `actor` or `resource` is present and non-blank);
-3. individual blank checks (`actor` not blank if provided, `resource` not blank if provided);
-4. numeric bounds (`limit` in `[1, 200]`);
-5. cursor decoding and shape validation when `cursor` is provided.
+3. actor-list parsing rules (`actor` can be parsed into one or more non-blank values and contains at most 10 values);
+4. individual blank checks (`resource` not blank if provided);
+5. numeric bounds (`limit` in `[1, 200]`);
+6. cursor decoding and shape validation when `cursor` is provided.
 
 When both `actor` and `resource` are present but blank, the mutex rule fires first ("at least one of actor or resource is required") rather than the individual blank message, because that is the more actionable client-facing signal.
 
@@ -336,6 +359,7 @@ This choice avoids overlap when clients split time windows into adjacent ranges.
 Planned API-layer changes:
 
 - Expose `cursor` and `limit` on `GET /audit-events`.
+- Keep `actor` as a single query parameter name while allowing one actor value or a comma-separated actor list in that parameter.
 - Replace the bare `List<AuditEventResponse>` response with a page envelope, for example `AuditEventSearchResponse`.
 - Keep `AuditEventController` focused on request binding, HTTP status codes, and response serialization.
 - Extend `ApiExceptionHandler` so semantic query errors can return `422`.
@@ -344,7 +368,7 @@ Planned API-layer changes:
 
 Planned domain-layer changes:
 
-- Add domain validation for the new query rules: `from/to` required, `from < to`, at least one of `actor/resource`, limit range, valid cursor when provided.
+- Add domain validation for the new query rules: `from/to` required, `from < to`, at least one of `actor/resource`, multi-actor parsing with a maximum of 10 actor values, limit range, valid cursor when provided.
 - Keep the search use case in `AuditEventService` so invariants are enforced outside the controller.
 
 Recommended domain objects:
@@ -359,10 +383,11 @@ Planned persistence-layer changes:
 
 - Implement `PostgresAuditEventRepository.search(...)` with keyset pagination.
 - Keep filtering on `timestamp`, `actor`, and `resource`.
+- Translate multi-actor filtering into an `actor IN (...)` predicate over the parsed actor list.
 - Order by `timestamp DESC, id DESC`.
 - Apply the cursor predicate when `cursor` is present.
 - Fetch `limit + 1` rows to determine whether another page exists.
-- Add the new composite indexes through Flyway.
+- Reuse the existing actor and resource composite indexes introduced through Flyway.
 
 Only `search(...)` is changed. Other repository methods are explicitly left alone:
 
@@ -408,8 +433,10 @@ This design follows the project rules from `AGENTS.md`.
 
 The implementation should add or update Testcontainers-based integration tests for:
 
+- multi-actor `actor + time range` search;
 - `actor + time range` search;
 - `resource + time range` search;
+- multi-actor cursor-based pagination across multiple pages for a fixed query window;
 - cursor-based pagination across multiple pages for a fixed query window;
 - deterministic ordering when multiple events share the same timestamp;
 - validation failures returning `400` and `422` as designed;

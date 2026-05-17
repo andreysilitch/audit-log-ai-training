@@ -22,7 +22,7 @@
 ## Findings
 
 ### 1. Each AC is testable - [PASS]
-[PASS] requirements.md defines 17 numbered ACs with observable endpoint, filter, ordering, pagination, or validation behavior.
+[PASS] requirements.md defines 20 numbered ACs with observable endpoint, filter, ordering, pagination, or validation behavior.
 
 ### 2. Tasks have refs and DoD - [PASS]
 [PASS] every TASK section in tasks.md includes both ### Refs and ### DoD.
@@ -43,7 +43,7 @@
 [PASS] markdown cross-references in requirements.md, design.md, and tasks.md resolve to real files and anchors.
 
 ### 8. Every AC is in EARS form (Ubiquitous / Event-driven / Unwanted / State-driven / Optional) - [PASS]
-[PASS] all 17 ACs match a basic EARS pattern.
+[PASS] all 20 ACs match a basic EARS pattern.
 
 ## Recommended next steps
 

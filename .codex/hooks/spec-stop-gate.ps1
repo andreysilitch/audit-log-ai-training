@@ -821,7 +821,17 @@ foreach ($feature in $targetFeatures) {
 $blocking = @()
 foreach ($result in $results) {
     foreach ($finding in ($result.findings | Where-Object { $_.verdict -eq "FAIL" })) {
-        $blocking += "- $($result.feature): [$($finding.index)] $($finding.criterion) -> $(Normalize-RelPath -RepoRoot $repoRoot -FullPath $result.reportPath)"
+        $parts = @(
+            "- $($result.feature): [$($finding.index)] $($finding.criterion)",
+            "evidence: $($finding.evidence)",
+            "report: $(Normalize-RelPath -RepoRoot $repoRoot -FullPath $result.reportPath)"
+        )
+
+        if ($finding.details -and $finding.details.Count -gt 0) {
+            $parts += "details: $($finding.details -join ' | ')"
+        }
+
+        $blocking += ($parts -join " ; ")
     }
 }
 

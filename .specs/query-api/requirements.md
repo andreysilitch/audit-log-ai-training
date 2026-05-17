@@ -13,7 +13,7 @@ The query API must help different operational roles answer different questions:
 The feature is a read-only HTTP endpoint, for example:
 
 ```http
-GET /audit-events?actor=u_42&resource=order/9f3b...&from=2026-04-01T00:00:00Z&to=2026-05-01T00:00:00Z&cursor=eyJvY2N1cnJlZEF0IjoiMjAyNi0wNC0zMFQxMjozNDo1NloiLCJpZCI6IjEyMzQ1In0&limit=50
+GET /audit-events?actor=u_42,svc_billing,svc_auth&resource=order/9f3b...&from=2026-04-01T00:00:00Z&to=2026-05-01T00:00:00Z&cursor=eyJvY2N1cnJlZEF0IjoiMjAyNi0wNC0zMFQxMjozNDo1NloiLCJpZCI6IjEyMzQ1In0&limit=50
 ```
 
 ## User Stories with AC
@@ -28,14 +28,16 @@ As a compliance officer, I want to retrieve audit events for a specific actor wi
 1. The API shall expose a read-only `GET /audit-events` endpoint.
 ##### US1.AC2
 2. The API shall support filtering by `actor`.
+##### US1.AC2a
+3. The API shall accept `actor` as either a single value or a comma-separated list of actor values, and a multi-actor request shall return events matching any provided actor value within the same query scope.
 ##### US1.AC3
-3. The API shall support filtering by `from` and `to` as an explicit UTC time range.
+4. The API shall support filtering by `from` and `to` as an explicit UTC time range.
 ##### US1.AC4
-4. The API shall return event id, occurred timestamp, actor, resource, action, outcome, and context for each matching event.
+5. The API shall return event id, occurred timestamp, actor, resource, action, outcome, and context for each matching event.
 ##### US1.AC5
-5. The API shall return results in a deterministic order so repeated requests over the same dataset produce the same sequence.
+6. The API shall return results in a deterministic order so repeated requests over the same dataset produce the same sequence.
 ##### US1.AC6
-6. If request parameters are invalid, the API shall return a safe validation error without leaking SQL text, stack traces, or internal database details.
+7. If request parameters are invalid, the API shall return a safe validation error without leaking SQL text, stack traces, or internal database details.
 
 ### User Story 2: Incident reconstruction by resource and time range
 
@@ -70,8 +72,12 @@ As a security analyst, I want to paginate through a large result set without los
 4. When more results are available, the API shall return a continuation value such as `nextCursor` and shall signal when no further pages exist.
 ##### US3.AC5
 5. The API shall define a deterministic tie-break strategy for events with identical timestamps so page boundaries remain stable.
+##### US3.AC5a
+6. When a client paginates through a query scope that uses a multi-actor `actor` filter, the API shall preserve the same cursor-based stability guarantees as for a single-actor query scope.
 ##### US3.AC6
-6. If pagination parameters are invalid, the API shall return a safe client error for cases such as a malformed `cursor` or a `limit` outside the allowed range.
+7. If pagination parameters are invalid, the API shall return a safe client error for cases such as a malformed `cursor` or a `limit` outside the allowed range.
+##### US3.AC6a
+8. If the parsed `actor` list contains more than 10 actor values, the API shall return `422 Unprocessable Entity`.
 
 ## Out of Scope
 
@@ -90,10 +96,13 @@ The following questions have been resolved and the answers are normative for thi
 
 - **`from` and `to` requirement.** Both `from` and `to` are required on every request. One-sided time bounds are not accepted.
 - **`actor` / `resource` filters.** At least one of `actor` or `resource` must be present in addition to the time range. Each is individually optional, but they cannot both be omitted.
+- **Multi-actor filter semantics.** `actor` accepts either one actor value or a comma-separated list of actor values. Multi-actor matching uses OR semantics within the `actor` filter and still combines with `resource` and time-range filters using AND semantics.
+- **Multi-actor filter limit.** One request may contain at most 10 actor values in the `actor` filter. More than 10 actor values is a semantic validation error and returns `422 Unprocessable Entity`.
 - **Canonical sort order.** Results are returned in `occurredAt DESC, id DESC` order. This is also the order used for pagination.
 - **Response envelope.** The response is a page envelope with an `items` array and a `page` object carrying pagination metadata (`limit`, `cursor`, `nextCursor`, `hasMore`). It is not a bare event list.
 - **`outcome` filter.** `outcome` is only exposed in the response. It is not a query filter in this version.
 - **`limit` bounds.** Default page size is `50` when `limit` is omitted. Maximum allowed `limit` is `200`.
+- **Multi-actor index strategy.** The implementation must support efficient multi-actor filtering on `actor`, and `design.md` must either define a new index strategy for that filter or explicitly justify why the existing indexed access path is sufficient.
 - **`payload` vs `context`.** The endpoint returns a single field named `context`, aligned with the existing domain model and storage schema. `payload` is not returned.
 
 ## Open Questions
